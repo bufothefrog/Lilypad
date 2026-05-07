@@ -47,10 +47,14 @@ class SnappingManager {
     private let marginRight = Defaults.snapEdgeMarginRight.cgFloat
     
     init() {
+        // Force lazy init of SnapAreaModel so its known-displays registry
+        // observer is installed at launch, not on the first drag.
+        _ = SnapAreaModel.instance
+
         if Defaults.windowSnapping.enabled != false {
             enableSnapping()
         }
-        
+
         registerWorkspaceChangeNote()
         
         Notification.Name.windowSnapping.onPost { notification in
@@ -408,9 +412,8 @@ class SnappingManager {
                 }
             }
             
-            let config = screen.frame.isLandscape
-            ? SnapAreaModel.instance.landscape[directional]
-            : SnapAreaModel.instance.portrait[directional]
+            let orientation: DisplayOrientation = screen.frame.isLandscape ? .landscape : .portrait
+            let config = SnapAreaModel.instance.snapAreas(for: orientation, displayUUID: screen.displayUUIDString)[directional]
             
             if let action = config?.action {
                 return SnapArea(screen: screen, directional: directional, action: action)

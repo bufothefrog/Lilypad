@@ -84,6 +84,8 @@ class Defaults {
     static let alwaysAccountForStage = OptionalBoolDefault(key: "alwaysAccountForStage")
     static let landscapeSnapAreas = JSONDefault<[Directional:SnapAreaConfig]>(key: "landscapeSnapAreas")
     static let portraitSnapAreas = JSONDefault<[Directional:SnapAreaConfig]>(key: "portraitSnapAreas")
+    static let snapAreasByDisplay = JSONDefault<[String:PerDisplaySnapAreas]>(key: "snapAreasByDisplay")
+    static let knownDisplays = JSONDefault<[String:KnownDisplay]>(key: "knownDisplays")
     static let missionControlDragging = OptionalBoolDefault(key: "missionControlDragging")
     static let enhancedUI = IntEnumDefault<EnhancedUI>(key: "enhancedUI", defaultValue: .disableEnable)
     static let footprintAnimationDurationMultiplier = FloatDefault(key: "footprintAnimationDurationMultiplier", defaultValue: 0)
@@ -170,6 +172,8 @@ class Defaults {
         alwaysAccountForStage,
         landscapeSnapAreas,
         portraitSnapAreas,
+        snapAreasByDisplay,
+        knownDisplays,
         missionControlDragging,
         enhancedUI,
         footprintAnimationDurationMultiplier,
