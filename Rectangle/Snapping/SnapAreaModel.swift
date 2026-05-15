@@ -100,11 +100,12 @@ class SnapAreaModel {
         for screen in NSScreen.screens {
             guard let uuid = screen.displayUUIDString else { continue }
             let name = screen.localizedName
-            if let existing = registry[uuid], existing.name == name {
-                registry[uuid] = KnownDisplay(name: name, lastSeen: now)
-            } else {
-                registry[uuid] = KnownDisplay(name: name, lastSeen: now)
-            }
+            // Skip displays whose name hasn't resolved yet. macOS briefly
+            // enumerates displays mid-handshake (e.g. while docking) before
+            // their EDID name is available; recording those would leave
+            // permanent unnamed "phantom" entries in the registry.
+            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            registry[uuid] = KnownDisplay(name: name, lastSeen: now)
             changed = true
         }
         if changed {
