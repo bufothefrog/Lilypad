@@ -36,10 +36,6 @@ struct LayoutsRootView: View {
     // visible placeholder; choosing a starter fires the add and resets to `nil`.
     @State private var pendingStarter: QuickStarter? = nil
 
-    // The layout currently open in the FancyZones editor sheet (M15). `nil` =
-    // no sheet. Identifiable so `.sheet(item:)` (10.15) drives presentation.
-    @State private var editingLayout: ZoneLayout? = nil
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -51,15 +47,20 @@ struct LayoutsRootView: View {
             }
             .padding(20)
         }
-        .sheet(item: $editingLayout) { layout in
-            LayoutEditorView(
-                displayUUID: model.selectedDisplayUUID ?? "",
-                displayName: model.selectedDisplayName,
-                layout: layout,
-                onSaved: { model.reloadLayouts() },
-                onClose: { editingLayout = nil }
-            )
-        }
+    }
+
+    /// Open the M15b FULL-SCREEN interactive editor on the layout's monitor (the
+    /// in-prefs sheet is gone). The window resolves the target `NSScreen` from the
+    /// selected display's UUID, falling back to the main screen when disconnected.
+    /// On Save it refreshes the layouts list; Cancel/Escape leaves the original.
+    private func openEditor(for layout: ZoneLayout) {
+        guard let uuid = model.selectedDisplayUUID else { return }
+        LayoutEditorWindowController.open(
+            displayUUID: uuid,
+            displayName: model.selectedDisplayName,
+            layout: layout,
+            onSaved: { model.reloadLayouts() }
+        )
     }
 
     // MARK: - Monitor picker
@@ -166,9 +167,10 @@ struct LayoutsRootView: View {
             }
             .disabled(isActive)
 
-            // M15 FancyZones canvas editor — opens the sheet on the working copy.
+            // M15b FancyZones editor — opens the FULL-SCREEN interactive editor on
+            // the layout's monitor (the in-prefs sheet was removed in M15b).
             Button(NSLocalizedString("Edit…", tableName: "Main", value: "Edit…", comment: "")) {
-                editingLayout = layout
+                openEditor(for: layout)
             }
 
             Button(NSLocalizedString("Remove", tableName: "Main", value: "Remove", comment: "")) {
