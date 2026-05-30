@@ -149,7 +149,16 @@ enum WindowAction: Int, Codable {
          gridSpanLeft = 133,
          gridSpanRight = 134,
          gridSpanUp = 135,
-         gridSpanDown = 136
+         gridSpanDown = 136,
+         activateLayoutSlot1 = 137,
+         activateLayoutSlot2 = 138,
+         activateLayoutSlot3 = 139,
+         activateLayoutSlot4 = 140,
+         activateLayoutSlot5 = 141,
+         activateLayoutSlot6 = 142,
+         activateLayoutSlot7 = 143,
+         activateLayoutSlot8 = 144,
+         activateLayoutSlot9 = 145
 
     // Order matters here - it's used in the menu
     static let active = [leftHalf, rightHalf, centerHalf, topHalf, bottomHalf,
@@ -162,6 +171,8 @@ enum WindowAction: Int, Codable {
                          moveLeft, moveRight, moveUp, moveDown,
                          gridMoveLeft, gridMoveRight, gridMoveUp, gridMoveDown,
                          gridSpanLeft, gridSpanRight, gridSpanUp, gridSpanDown,
+                         activateLayoutSlot1, activateLayoutSlot2, activateLayoutSlot3, activateLayoutSlot4, activateLayoutSlot5,
+                         activateLayoutSlot6, activateLayoutSlot7, activateLayoutSlot8, activateLayoutSlot9,
                          firstFourth, secondFourth, thirdFourth, lastFourth, firstThreeFourths, centerThreeFourths, lastThreeFourths,
                          topLeftSixth, topCenterSixth, topRightSixth, bottomLeftSixth, bottomCenterSixth, bottomRightSixth,
                          specified, reverseAll,
@@ -352,6 +363,32 @@ enum WindowAction: Int, Codable {
         case .gridSpanRight: return "gridSpanRight"
         case .gridSpanUp: return "gridSpanUp"
         case .gridSpanDown: return "gridSpanDown"
+        case .activateLayoutSlot1: return "activateLayoutSlot1"
+        case .activateLayoutSlot2: return "activateLayoutSlot2"
+        case .activateLayoutSlot3: return "activateLayoutSlot3"
+        case .activateLayoutSlot4: return "activateLayoutSlot4"
+        case .activateLayoutSlot5: return "activateLayoutSlot5"
+        case .activateLayoutSlot6: return "activateLayoutSlot6"
+        case .activateLayoutSlot7: return "activateLayoutSlot7"
+        case .activateLayoutSlot8: return "activateLayoutSlot8"
+        case .activateLayoutSlot9: return "activateLayoutSlot9"
+        }
+    }
+
+    /// The 1-based layout slot number for the `activateLayoutSlot*` actions (M9), or
+    /// `nil` for any other action. The handler subtracts 1 for the array index.
+    var layoutSlotNumber: Int? {
+        switch self {
+        case .activateLayoutSlot1: return 1
+        case .activateLayoutSlot2: return 2
+        case .activateLayoutSlot3: return 3
+        case .activateLayoutSlot4: return 4
+        case .activateLayoutSlot5: return 5
+        case .activateLayoutSlot6: return 6
+        case .activateLayoutSlot7: return 7
+        case .activateLayoutSlot8: return 8
+        case .activateLayoutSlot9: return 9
+        default: return nil
         }
     }
 
@@ -670,6 +707,33 @@ enum WindowAction: Int, Codable {
         case .gridSpanDown:
             key = "gridSpanDown.title"
             value = "Grid Span Down"
+        case .activateLayoutSlot1:
+            key = "activateLayoutSlot1.title"
+            value = "Activate Layout Slot 1"
+        case .activateLayoutSlot2:
+            key = "activateLayoutSlot2.title"
+            value = "Activate Layout Slot 2"
+        case .activateLayoutSlot3:
+            key = "activateLayoutSlot3.title"
+            value = "Activate Layout Slot 3"
+        case .activateLayoutSlot4:
+            key = "activateLayoutSlot4.title"
+            value = "Activate Layout Slot 4"
+        case .activateLayoutSlot5:
+            key = "activateLayoutSlot5.title"
+            value = "Activate Layout Slot 5"
+        case .activateLayoutSlot6:
+            key = "activateLayoutSlot6.title"
+            value = "Activate Layout Slot 6"
+        case .activateLayoutSlot7:
+            key = "activateLayoutSlot7.title"
+            value = "Activate Layout Slot 7"
+        case .activateLayoutSlot8:
+            key = "activateLayoutSlot8.title"
+            value = "Activate Layout Slot 8"
+        case .activateLayoutSlot9:
+            key = "activateLayoutSlot9.title"
+            value = "Activate Layout Slot 9"
         }
 
         return NSLocalizedString(key, tableName: "Main", value: value, comment: "")
@@ -700,7 +764,11 @@ enum WindowAction: Int, Codable {
     
     var isDragSnappable: Bool {
         switch self {
-        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown, .gridSpanLeft, .gridSpanRight, .gridSpanUp, .gridSpanDown, .specified, .reverseAll, .tileAll, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp,
+        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown, .gridSpanLeft, .gridSpanRight, .gridSpanUp, .gridSpanDown,
+            // Layout-activation slots (intercepted by GridLayoutManager — not window-rect actions).
+            .activateLayoutSlot1, .activateLayoutSlot2, .activateLayoutSlot3, .activateLayoutSlot4, .activateLayoutSlot5,
+            .activateLayoutSlot6, .activateLayoutSlot7, .activateLayoutSlot8, .activateLayoutSlot9,
+            .specified, .reverseAll, .tileAll, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp,
             // Ninths
             .topLeftNinth, .topCenterNinth, .topRightNinth, .middleLeftNinth, .middleCenterNinth, .middleRightNinth, .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth,
             // Corner thirds
@@ -751,6 +819,19 @@ enum WindowAction: Int, Codable {
         case .gridSpanRight: return Shortcut( cmd|ctrl|shift, kVK_RightArrow )
         case .gridSpanUp: return Shortcut( cmd|ctrl|shift, kVK_UpArrow )
         case .gridSpanDown: return Shortcut( cmd|ctrl|shift, kVK_DownArrow )
+        // Monitor-relative layout activation (M9). Control+Command+digit — verified free
+        // across the repo (no action or default uses ctrl|cmd with a digit; ctrl|cmd is
+        // otherwise only arrow chords) and Option-FREE (the user's keyboard has no Option
+        // key). Rebindable in the M14 settings UI.
+        case .activateLayoutSlot1: return Shortcut( ctrl|cmd, kVK_ANSI_1 )
+        case .activateLayoutSlot2: return Shortcut( ctrl|cmd, kVK_ANSI_2 )
+        case .activateLayoutSlot3: return Shortcut( ctrl|cmd, kVK_ANSI_3 )
+        case .activateLayoutSlot4: return Shortcut( ctrl|cmd, kVK_ANSI_4 )
+        case .activateLayoutSlot5: return Shortcut( ctrl|cmd, kVK_ANSI_5 )
+        case .activateLayoutSlot6: return Shortcut( ctrl|cmd, kVK_ANSI_6 )
+        case .activateLayoutSlot7: return Shortcut( ctrl|cmd, kVK_ANSI_7 )
+        case .activateLayoutSlot8: return Shortcut( ctrl|cmd, kVK_ANSI_8 )
+        case .activateLayoutSlot9: return Shortcut( ctrl|cmd, kVK_ANSI_9 )
         default: return nil
         }
     }
@@ -794,6 +875,17 @@ enum WindowAction: Int, Codable {
         case .gridSpanRight: return Shortcut( cmd|ctrl|shift, kVK_RightArrow )
         case .gridSpanUp: return Shortcut( cmd|ctrl|shift, kVK_UpArrow )
         case .gridSpanDown: return Shortcut( cmd|ctrl|shift, kVK_DownArrow )
+        // Monitor-relative layout activation (M9): Control+Command+digit in both default
+        // tables (Option-free, verified free across the repo).
+        case .activateLayoutSlot1: return Shortcut( ctrl|cmd, kVK_ANSI_1 )
+        case .activateLayoutSlot2: return Shortcut( ctrl|cmd, kVK_ANSI_2 )
+        case .activateLayoutSlot3: return Shortcut( ctrl|cmd, kVK_ANSI_3 )
+        case .activateLayoutSlot4: return Shortcut( ctrl|cmd, kVK_ANSI_4 )
+        case .activateLayoutSlot5: return Shortcut( ctrl|cmd, kVK_ANSI_5 )
+        case .activateLayoutSlot6: return Shortcut( ctrl|cmd, kVK_ANSI_6 )
+        case .activateLayoutSlot7: return Shortcut( ctrl|cmd, kVK_ANSI_7 )
+        case .activateLayoutSlot8: return Shortcut( ctrl|cmd, kVK_ANSI_8 )
+        case .activateLayoutSlot9: return Shortcut( ctrl|cmd, kVK_ANSI_9 )
         default: return nil
         }
     }
@@ -926,6 +1018,9 @@ enum WindowAction: Int, Codable {
         case .gridSpanRight: return NSImage(imageLiteralResourceName: "moveRightTemplate")
         case .gridSpanUp: return NSImage(imageLiteralResourceName: "moveUpTemplate")
         case .gridSpanDown: return NSImage(imageLiteralResourceName: "moveDownTemplate")
+        case .activateLayoutSlot1, .activateLayoutSlot2, .activateLayoutSlot3, .activateLayoutSlot4, .activateLayoutSlot5,
+             .activateLayoutSlot6, .activateLayoutSlot7, .activateLayoutSlot8, .activateLayoutSlot9:
+            return NSImage()
         }
     }
 
@@ -983,7 +1078,11 @@ enum WindowAction: Int, Codable {
              // gaps are applied by GridLayoutManager (zoneRectWithGaps/rangeRectWithGaps),
              // not this path.
              .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown,
-             .gridSpanLeft, .gridSpanRight, .gridSpanUp, .gridSpanDown:
+             .gridSpanLeft, .gridSpanRight, .gridSpanUp, .gridSpanDown,
+             // Layout-activation slots: intercepted by GridLayoutManager, never reach
+             // the calculation/gap path.
+             .activateLayoutSlot1, .activateLayoutSlot2, .activateLayoutSlot3, .activateLayoutSlot4, .activateLayoutSlot5,
+             .activateLayoutSlot6, .activateLayoutSlot7, .activateLayoutSlot8, .activateLayoutSlot9:
             return .none
         }
     }

@@ -93,6 +93,54 @@ class GridLayoutModelTests: XCTestCase {
         XCTAssertTrue(keys.contains("gridWallActionDown"))
         XCTAssertTrue(keys.contains("gridWallActionLeft"))
         XCTAssertTrue(keys.contains("gridWallActionRight"))
+        XCTAssertTrue(keys.contains("shortcutTargetMode"))
+    }
+}
+
+// MARK: - M9: monitor-relative layout-activation slot resolution
+
+/// Unit tests for the PURE slot resolution backing `activateLayoutSlot*`:
+/// `GridLayoutManager.layoutId(forSlot:in:)` maps a 1-based slot to a layout id,
+/// returning nil for any out-of-range slot (including an empty layout list).
+class GridLayoutSlotTests: XCTestCase {
+
+    private func layout(_ id: String) -> ZoneLayout {
+        ZoneLayout(id: id, name: id, colBoundaries: [0, 0.5, 1], rowBoundaries: [0, 1], cellZones: [0, 1])
+    }
+
+    private func threeLayouts() -> PerDisplayLayouts {
+        PerDisplayLayouts(layouts: [layout("a"), layout("b"), layout("c")], activeLayoutId: "a")
+    }
+
+    func testInRangeSlotsResolveToTheLayoutAtThatPosition() {
+        let perDisplay = threeLayouts()
+        XCTAssertEqual(GridLayoutManager.layoutId(forSlot: 1, in: perDisplay), "a")
+        XCTAssertEqual(GridLayoutManager.layoutId(forSlot: 2, in: perDisplay), "b")
+        XCTAssertEqual(GridLayoutManager.layoutId(forSlot: 3, in: perDisplay), "c")
+    }
+
+    func testOutOfRangeSlotReturnsNil() {
+        let perDisplay = threeLayouts()
+        // Slot beyond the layout count.
+        XCTAssertNil(GridLayoutManager.layoutId(forSlot: 4, in: perDisplay))
+        // Slot below the 1-based range (defensive — actions only emit 1...9).
+        XCTAssertNil(GridLayoutManager.layoutId(forSlot: 0, in: perDisplay))
+        XCTAssertNil(GridLayoutManager.layoutId(forSlot: -1, in: perDisplay))
+    }
+
+    func testEmptyLayoutListReturnsNilForEverySlot() {
+        let empty = PerDisplayLayouts()
+        XCTAssertNil(GridLayoutManager.layoutId(forSlot: 1, in: empty))
+        XCTAssertNil(GridLayoutManager.layoutId(forSlot: 9, in: empty))
+    }
+
+    // MARK: ShortcutTargetMode raw values stable (persisted)
+
+    func testShortcutTargetModeRawValuesStable() {
+        XCTAssertEqual(ShortcutTargetMode.frontWindow.rawValue, 1)
+        XCTAssertEqual(ShortcutTargetMode.cursor.rawValue, 2)
+        // 0 must not decode to any case, so a never-set key falls through to defaultValue.
+        XCTAssertNil(ShortcutTargetMode(rawValue: 0))
     }
 }
 

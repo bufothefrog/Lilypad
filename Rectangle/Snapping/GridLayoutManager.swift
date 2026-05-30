@@ -40,6 +40,13 @@ class GridLayoutManager {
     /// never reached for a grid action (it has no `calculationsByAction` entry and
     /// would beep on the missing action).
     static func execute(parameters: ExecutionParameters) -> Bool {
+        // M9: monitor-relative layout-activation slots. Resolved + consumed here before
+        // the gridMove/gridSpan path so they never reach WindowManager.execute (which
+        // would beep — they have no calculationsByAction entry).
+        if let slot = parameters.action.layoutSlotNumber {
+            return activateLayoutSlot(slot)
+        }
+
         // Resolve the action's kind + direction. Non-grid actions return false
         // untouched so they flow on to WindowManager.execute.
         guard let resolved = gridAction(for: parameters.action) else {
@@ -179,6 +186,89 @@ class GridLayoutManager {
             recordGridMove(parameters.action, windowElement: windowElement, windowId: windowId)
         }
         return true
+    }
+
+    // MARK: - M9: monitor-relative layout-activation slots
+
+    /// The overlay used for the brief activation FLASH, plus its auto-hide timer.
+    /// A single shared instance (mirroring the M4 debug overlay): re-activating
+    /// re-shows it on whatever screen resolves and replaces the timer, so rapid
+    /// activations never leak or strand the overlay.
+    private static var activationOverlay: GridOverlayWindow?
+    private static var activationOverlayHideTimer: Timer?
+
+    /// How long the activation flash stays visible before auto-hiding.
+    private static let activationFlashDuration: TimeInterval = 0.8
+
+    /// Activate the layout in `slot` (1-based) on the currently-active monitor (resolved
+    /// per `Defaults.shortcutTargetMode`), set it as that monitor's active layout, and
+    /// briefly flash its grid overlay as confirmation. Always returns `true` (the slot
+    /// action is consumed — even on failure, where it beeps — so it never reaches
+    /// `WindowManager.execute`).
+    static func activateLayoutSlot(_ slot: Int) -> Bool {
+        // Resolve the active monitor per the user's target-mode preference.
+        let screenDetection = ScreenDetection()
+        let usableScreens: UsableScreens?
+        switch Defaults.shortcutTargetMode.value {
+        case .frontWindow:
+            usableScreens = screenDetection.detectScreens(using: AccessibilityElement.getFrontWindowElement())
+        case .cursor:
+            usableScreens = screenDetection.detectScreensAtCursor()
+        }
+        guard let screen = usableScreens?.currentScreen,
+              let displayUUID = screen.displayUUIDString
+        else {
+            NSSound.beep()
+            Logger.log("Activate layout slot \(slot): no usable screen / display UUID")
+            return true
+        }
+
+        // Seed the starter set on a fresh monitor so slot 1 works on first use.
+        if GridModel.instance.activeLayout(forDisplay: displayUUID) == nil {
+            GridModel.instance.seedDefaultLayouts(forDisplays: [displayUUID])
+        }
+
+        // Resolve the slot to a layout id via the pure helper (testable).
+        let perDisplay = GridModel.instance.layouts(forDisplay: displayUUID)
+        guard let layoutId = layoutId(forSlot: slot, in: perDisplay) else {
+            NSSound.beep()
+            Logger.log("Activate layout slot \(slot): no such slot for display \(displayUUID)")
+            return true
+        }
+
+        GridModel.instance.setActiveLayout(id: layoutId, forDisplay: displayUUID)
+
+        // FLASH the now-active layout's overlay on that screen as visible confirmation.
+        if let layout = perDisplay.layouts.first(where: { $0.id == layoutId }) {
+            flashLayout(layout, on: screen)
+        }
+        return true
+    }
+
+    /// PURE slot resolution: given a `PerDisplayLayouts` and a 1-based slot number,
+    /// return the layout id at that slot, or `nil` when the slot is out of range
+    /// (including an empty layout list). Unit-tested directly.
+    static func layoutId(forSlot slot: Int, in perDisplay: PerDisplayLayouts) -> String? {
+        let index = slot - 1
+        guard index >= 0, index < perDisplay.layouts.count else { return nil }
+        return perDisplay.layouts[index].id
+    }
+
+    /// Briefly show `layout`'s grid overlay (no highlighted zones) on `screen`, then
+    /// auto-hide after `activationFlashDuration`. Reuses one shared `GridOverlayWindow`
+    /// and replaces the auto-hide timer on every call, so rapid activations don't leak
+    /// or strand the overlay (mirrors the M4 debug-overlay auto-hide pattern).
+    private static func flashLayout(_ layout: ZoneLayout, on screen: NSScreen) {
+        let overlay = activationOverlay ?? GridOverlayWindow()
+        activationOverlay = overlay
+        // No highlighted zones: the flash confirms WHICH layout is now active, not a selection.
+        overlay.show(layout: layout, on: screen, highlightZones: [])
+
+        activationOverlayHideTimer?.invalidate()
+        activationOverlayHideTimer = Timer.scheduledTimer(withTimeInterval: activationFlashDuration, repeats: false) { _ in
+            activationOverlay?.hide()
+            activationOverlayHideTimer = nil
+        }
     }
 
     /// Overwrite `lastRectangleActions[windowId]` with `action` (a `gridMove<dir>`)
@@ -369,6 +459,20 @@ class GridLayoutManager {
 /// (`gridWallActionUp` -> `.maximize`, `gridWallActionDown` -> `.minimize`) would
 /// silently never apply. Keeping `.none` at `1` lets the unset sentinel fall through
 /// to `defaultValue` as intended.
+/// Which monitor a monitor-relative shortcut (M9 `activateLayoutSlot*`) targets when
+/// fired. Stored via `IntEnumDefault<ShortcutTargetMode>` (`Defaults.shortcutTargetMode`).
+///
+/// Raw values START AT 1 by the shared `IntEnumDefault` convention: `0` is the reserved
+/// "unset" sentinel, so a fresh install (never-set key reads back `0`) falls through to
+/// the `defaultValue` (`.frontWindow`) rather than decoding to a real case. Do not
+/// renumber once shipped (the value is persisted + exported).
+enum ShortcutTargetMode: Int, Codable {
+    /// Resolve the active monitor from the FRONT WINDOW's screen (default).
+    case frontWindow = 1
+    /// Resolve the active monitor from the screen under the CURSOR.
+    case cursor = 2
+}
+
 enum EdgeAction: Int, Codable {
     /// Do nothing special — just beep, as before.
     case none = 1

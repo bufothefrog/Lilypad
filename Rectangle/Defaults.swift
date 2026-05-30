@@ -132,6 +132,13 @@ class Defaults {
     static let gridWallActionLeft = IntEnumDefault<EdgeAction>(key: "gridWallActionLeft", defaultValue: .none)
     static let gridWallActionRight = IntEnumDefault<EdgeAction>(key: "gridWallActionRight", defaultValue: .none)
 
+    // MARK: Monitor-relative shortcut target (M9)
+    /// Which monitor a monitor-relative shortcut (e.g. `activateLayoutSlot*`) acts on:
+    /// the FRONT WINDOW's monitor (default) or the monitor under the CURSOR. Stored via
+    /// `IntEnumDefault<ShortcutTargetMode>` (raw values start at 1; 0 is the reserved unset
+    /// sentinel that falls through to `.frontWindow`).
+    static let shortcutTargetMode = IntEnumDefault<ShortcutTargetMode>(key: "shortcutTargetMode", defaultValue: .frontWindow)
+
     static var array: [Default] = [
         launchOnLogin,
         disabledApps,
@@ -229,7 +236,8 @@ class Defaults {
         gridWallActionUp,
         gridWallActionDown,
         gridWallActionLeft,
-        gridWallActionRight
+        gridWallActionRight,
+        shortcutTargetMode
     ]
 }
 
