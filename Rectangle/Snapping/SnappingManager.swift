@@ -49,6 +49,13 @@ class SnappingManager {
     var currentGridLayout: ZoneLayout?
     var currentGridZone: Int?
 
+    // MARK: - Lilypad span sub-mode state (M6)
+    // The anchor zone a span extends FROM. Set when the span modifier transitions
+    // down (to the zone under the cursor at that moment), cleared when it goes up
+    // or any grid preview is cleared. nil ⇒ single-zone behavior. Only touched on
+    // the grid path, so the classic edge-snap path is unaffected.
+    var gridSpanAnchorZone: Int?
+
     let screenDetection = ScreenDetection()
     
     private let marginTop = Defaults.snapEdgeMarginTop.cgFloat
@@ -204,24 +211,60 @@ class SnappingManager {
     /// chooses between the grid path and the classic edge-snap path — when it
     /// returns false the existing behavior must be byte-for-byte unchanged.
     ///
+    /// SPAN COEXISTENCE (M6): the span modifier (default Option) must be allowed
+    /// as an EXTRA held modifier so Shift+Option still engages grid mode (to span)
+    /// instead of disengaging it. We therefore mask to deviceIndependentFlagsMask,
+    /// REMOVE the span modifier bits, then require the remainder to equal the
+    /// activation modifier. Result: Shift alone engages, Shift+span engages,
+    /// Shift+Command does NOT engage, span alone does NOT engage. When the span
+    /// modifier equals the activation modifier (or is 0), this collapses to the M5
+    /// exact-match behavior.
+    ///
     /// Factored out as a PURE function (no instance state) so it is unit-testable
     /// across the flag-on/off × modifier-held/not matrix.
     static func gridModeEngaged(modifierFlags: NSEvent.ModifierFlags,
                                 gridModeEnabled: Bool,
-                                activationModifierRawValue: Int) -> Bool {
+                                activationModifierRawValue: Int,
+                                spanModifierRawValue: Int) -> Bool {
         guard gridModeEnabled else { return false }
         // A 0 activation modifier means "no modifier required": engage on the
-        // flag alone. Otherwise the held flags must match exactly, using the same
-        // deviceIndependentFlagsMask idiom canSnap uses for snapModifiers.
+        // flag alone, regardless of which extra modifiers (incl. span) are held.
         guard activationModifierRawValue > 0 else { return true }
-        return modifierFlags.intersection(.deviceIndependentFlagsMask).rawValue == UInt(activationModifierRawValue)
+        // Mask to the device-independent flags, then strip the span bits so the
+        // span modifier is tolerated as an allowed extra. The remainder must equal
+        // the activation modifier exactly (same idiom canSnap uses for snapModifiers).
+        // Never strip the span bits when span == activation, so the activation
+        // modifier itself is never accidentally removed.
+        let masked = modifierFlags.intersection(.deviceIndependentFlagsMask).rawValue
+        let spanBits = UInt(max(spanModifierRawValue, 0))
+        let withoutSpan = (spanModifierRawValue > 0 && spanModifierRawValue != activationModifierRawValue)
+            ? (masked & ~spanBits)
+            : masked
+        return withoutSpan == UInt(activationModifierRawValue)
+    }
+
+    /// Whether the SPAN modifier (default Option) is currently held.
+    static func spanModifierHeld(modifierFlags: NSEvent.ModifierFlags,
+                                 spanModifierRawValue: Int) -> Bool {
+        guard spanModifierRawValue > 0 else { return false }
+        let masked = modifierFlags.intersection(.deviceIndependentFlagsMask).rawValue
+        return (masked & UInt(spanModifierRawValue)) == UInt(spanModifierRawValue)
     }
 
     /// Instance convenience reading current Defaults.
     func gridModeEngaged(_ event: NSEvent) -> Bool {
         SnappingManager.gridModeEngaged(modifierFlags: event.modifierFlags,
                                         gridModeEnabled: Defaults.gridModeEnabled.enabled,
-                                        activationModifierRawValue: Defaults.gridActivationModifier.value)
+                                        activationModifierRawValue: Defaults.gridActivationModifier.value,
+                                        spanModifierRawValue: Defaults.gridSpanModifier.value)
+    }
+
+    /// Grid mode engaged AND the span modifier currently held (so the drag should
+    /// extend a multi-zone span from the anchor zone).
+    func spanEngaged(_ event: NSEvent) -> Bool {
+        gridModeEngaged(event)
+            && SnappingManager.spanModifierHeld(modifierFlags: event.modifierFlags,
+                                                spanModifierRawValue: Defaults.gridSpanModifier.value)
     }
 
     func canSnap(_ event: NSEvent) -> Bool {
@@ -260,8 +303,17 @@ class SnappingManager {
                    let layout = currentGridLayout,
                    let windowElement = windowElement,
                    let windowId = windowId {
-                    commitGridSnap(zone: zone, screen: screen, layout: layout,
-                                   windowElement: windowElement, windowId: windowId)
+                    // Span sub-mode (M6): when the span modifier is held and an
+                    // anchor is set, commit the selection rect from the anchor to
+                    // the current zone instead of the single zone. Otherwise commit
+                    // the single current zone exactly as M5 did.
+                    if spanEngaged(event), let anchor = gridSpanAnchorZone {
+                        commitGridSpanSnap(fromZone: anchor, toZone: zone, screen: screen, layout: layout,
+                                           windowElement: windowElement, windowId: windowId)
+                    } else {
+                        commitGridSnap(zone: zone, screen: screen, layout: layout,
+                                       windowElement: windowElement, windowId: windowId)
+                    }
                     windowElement.bringToFront()
                 }
                 clearGridPreview()
@@ -356,7 +408,7 @@ class SnappingManager {
                         box?.orderOut(nil)
                         currentSnapArea = nil
                     }
-                    updateGridPreview(windowId: windowId, currentRect: currentRect)
+                    updateGridPreview(windowId: windowId, currentRect: currentRect, spanEngaged: spanEngaged(event))
                     return
                 }
                 clearGridPreview()
@@ -429,7 +481,14 @@ class SnappingManager {
                     box?.orderOut(nil)
                     currentSnapArea = nil
                 }
-                updateGridPreview(windowId: windowId, currentRect: currentRect)
+                // Span sub-mode (M6): a .flagsChanged is exactly where the span
+                // modifier transitions down/up mid-drag, with no cursor movement.
+                // updateGridPreview owns the anchor logic: span engaged + no anchor
+                // ⇒ set the anchor to the zone under the cursor right now; span not
+                // engaged ⇒ clear the anchor and revert to single-zone preview. We
+                // re-render here without any cursor delta so the overlay reflects
+                // the new span/single state immediately.
+                updateGridPreview(windowId: windowId, currentRect: currentRect, spanEngaged: spanEngaged(event))
             } else {
                 // Left grid mode: hide the overlay. We deliberately do NOT
                 // re-render the edge-snap footprint here (no cursor info this
@@ -445,8 +504,18 @@ class SnappingManager {
 
     /// Re-evaluate the zone under the cursor and show/update the overlay. Called
     /// from the dragged + flagsChanged handlers while grid mode is engaged. Only
-    /// re-renders the overlay when the screen or zone actually changes.
-    private func updateGridPreview(windowId: CGWindowID, currentRect: CGRect) {
+    /// re-renders the overlay when the screen, layout, highlighted zone, or span
+    /// anchor actually changes.
+    ///
+    /// Span sub-mode (M6): when `spanEngaged` is true the selection runs from the
+    /// span anchor to the current zone and the overlay highlights ALL zones in that
+    /// span (`GridCalculation.zonesInSpan`); when false the overlay highlights only
+    /// the single current zone. The anchor is owned here:
+    /// - span engaged + no anchor yet ⇒ set the anchor to the current zone (this is
+    ///   the "modifier pressed" transition, and also the "pressed before a zone
+    ///   existed" recovery — the first frame with a non-nil current zone arms it).
+    /// - span not engaged ⇒ clear the anchor so a later span re-arms fresh.
+    private func updateGridPreview(windowId: CGWindowID, currentRect: CGRect, spanEngaged: Bool) {
         guard let screen = screenDetection.detectScreensAtCursor()?.currentScreen,
               let uuid = screen.displayUUIDString,
               let layout = GridModel.instance.ensureActiveLayout(forDisplay: uuid)
@@ -460,24 +529,70 @@ class SnappingManager {
         let area = screen.adjustedVisibleFrame(ignoreTodo)
         let zone = GridCalculation.zone(at: NSEvent.mouseLocation, in: area, layout: layout)
 
-        // Only re-render when the screen, layout, or highlighted zone changes.
-        let screenChanged = currentGridScreen != screen
+        // A span anchor is a zone ID, which is only meaningful WITHIN one screen's
+        // active layout. If the cursor crosses to a different screen, or the active
+        // layout for the current screen changes, an anchor armed against the old
+        // layout would be reinterpreted against the new one — yielding a
+        // geometrically wrong highlight and committed span (FINDINGS M6). Detect
+        // that here, BEFORE the anchor block, so a screen/layout change is treated
+        // exactly like "no anchor yet" and the anchor re-arms to the current zone in
+        // the NEW layout it will actually be committed against.
+        let screenChanged = currentGridScreen != nil && currentGridScreen != screen
+        let layoutChanged = currentGridLayout != nil && currentGridLayout?.id != layout.id
+        if screenChanged || layoutChanged {
+            gridSpanAnchorZone = nil
+        }
+
+        // Anchor management.
+        let previousAnchor = gridSpanAnchorZone
+        if spanEngaged {
+            // Arm the anchor on the span-modifier-down transition (no anchor yet),
+            // anchoring to the current zone under the cursor. If span was pressed
+            // before any zone existed, this re-tries each frame until a zone is hit.
+            // After a screen/layout change cleared the anchor above, this re-arms it
+            // against the new layout on the first frame with a zone under the cursor.
+            if gridSpanAnchorZone == nil, let zone = zone {
+                gridSpanAnchorZone = zone
+            }
+        } else {
+            // Span released (or never engaged): revert to single-zone behavior.
+            gridSpanAnchorZone = nil
+        }
+
+        // Compute the highlighted zone set: the span (anchor..current) when span is
+        // engaged and armed, otherwise just the single current zone.
+        let highlightZones: Set<Int>
+        if spanEngaged, let anchor = gridSpanAnchorZone, let zone = zone {
+            highlightZones = GridCalculation.zonesInSpan(fromZone: anchor, toZone: zone, layout: layout)
+        } else if let zone = zone {
+            highlightZones = [zone]
+        } else {
+            highlightZones = []
+        }
+
+        // Only re-render when something visible changed. (These re-render checks
+        // also fire on the FIRST frame — when currentGridScreen/Layout are still nil
+        // — so the initial overlay always shows; the anchor-reset checks above
+        // deliberately do not, to avoid clearing the anchor on its very first frame.)
+        let renderScreenChanged = currentGridScreen != screen
         let zoneChanged = currentGridZone != zone
-        let layoutChanged = currentGridLayout?.id != layout.id
+        let renderLayoutChanged = currentGridLayout?.id != layout.id
+        let anchorChanged = previousAnchor != gridSpanAnchorZone
 
         currentGridScreen = screen
         currentGridLayout = layout
         currentGridZone = zone
 
-        if screenChanged || zoneChanged || layoutChanged {
+        if renderScreenChanged || zoneChanged || renderLayoutChanged || anchorChanged {
             if Defaults.hapticFeedbackOnSnap.userEnabled, zone != nil {
                 NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
             }
-            gridOverlay.show(layout: layout, on: screen, highlightZone: zone)
+            gridOverlay.show(layout: layout, on: screen, highlightZones: highlightZones)
         }
     }
 
-    /// Hide the grid overlay and clear the previewed zone/screen/layout. Safe to
+    /// Hide the grid overlay and clear the previewed zone/screen/layout AND the
+    /// span anchor, so a stale span can't carry over into the next gesture. Safe to
     /// call when no preview is showing.
     private func clearGridPreview() {
         if currentGridScreen != nil || currentGridZone != nil || currentGridLayout != nil {
@@ -486,6 +601,7 @@ class SnappingManager {
         currentGridScreen = nil
         currentGridLayout = nil
         currentGridZone = nil
+        gridSpanAnchorZone = nil
     }
 
     /// Commit a grid drag-snap: compute the zone rect (with gaps) in the screen's
@@ -514,7 +630,34 @@ class SnappingManager {
         // display handled there) rather than hand-rolling setFrame.
         WindowManager.instance?.applyGridRect(rect, screen: screen, windowElement: windowElement, windowId: windowId)
     }
-    
+
+    /// Commit a grid SPAN drag-snap (M6): the window snaps to the selection rect
+    /// spanning `fromZone`..`toZone`. Mirrors `commitGridSnap` exactly (gaps,
+    /// restore-rect bookkeeping, the shared WindowManager.applyGridRect path) but
+    /// uses `GridCalculation.selectionRect` for the rect instead of a single zone.
+    private func commitGridSpanSnap(fromZone: Int, toZone: Int, screen: NSScreen, layout: ZoneLayout,
+                                    windowElement: AccessibilityElement, windowId: CGWindowID) {
+        let ignoreTodo = TodoManager.isTodoWindow(windowId)
+        let area = screen.adjustedVisibleFrame(ignoreTodo)
+
+        var rect = GridCalculation.selectionRect(layout: layout, fromZone: fromZone, toZone: toZone, in: area)
+        guard !rect.isNull else { return }
+        // Apply gaps the same way the single-zone commit does (inset the whole
+        // span by gapSize on every side), keeping span and single-zone snaps
+        // visually consistent.
+        if Defaults.gapSize.value > 0 {
+            rect = GapCalculation.applyGaps(rect, dimension: .both, sharedEdges: .none, gapSize: Defaults.gapSize.value)
+            guard !rect.isNull else { return }
+        }
+
+        if Defaults.unsnapRestore.enabled != false,
+           AppDelegate.windowHistory.restoreRects[windowId] == nil {
+            AppDelegate.windowHistory.restoreRects[windowId] = initialWindowRect
+        }
+
+        WindowManager.instance?.applyGridRect(rect, screen: screen, windowElement: windowElement, windowId: windowId)
+    }
+
     func unsnapRestore(windowId: CGWindowID, currentRect: CGRect, cursorLoc: CGPoint?) {
         if Defaults.unsnapRestore.enabled != false {
             // if window was put there by rectangle, restore size

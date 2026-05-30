@@ -334,6 +334,81 @@ class GridCalculationTests: XCTestCase {
         XCTAssertTrue(GridCalculation.selectionRect(layout: layout, fromZone: 998, toZone: 999, in: area).isNull)
     }
 
+    // MARK: - zonesInSpan (M6 span sub-mode)
+
+    /// A 2-zone horizontal span on the top row (0 → 1) covers exactly {0, 1}, and
+    /// the union of those zones' rects equals the selectionRect.
+    func testZonesInSpanHorizontal() {
+        let layout = uniform3x2()
+        let zones = GridCalculation.zonesInSpan(fromZone: 0, toZone: 1, layout: layout)
+        XCTAssertEqual(zones, [0, 1])
+        assertUnionMatchesSelection(zones, from: 0, to: 1, layout: layout)
+    }
+
+    /// A vertical span down the left column (0 → 3) covers {0, 3}.
+    func testZonesInSpanVertical() {
+        let layout = uniform3x2()
+        let zones = GridCalculation.zonesInSpan(fromZone: 0, toZone: 3, layout: layout)
+        XCTAssertEqual(zones, [0, 3])
+        assertUnionMatchesSelection(zones, from: 0, to: 3, layout: layout)
+    }
+
+    /// A 2×2 block span (top-left 0 → bottom-right-of-block 4 in a 3×2 grid)
+    /// covers the full 2×2 corner: {0, 1, 3, 4}.
+    func testZonesInSpan2x2Block() {
+        let layout = uniform3x2()
+        // 3×2 zone ids:  row 0: 0 1 2 ; row 1: 3 4 5.
+        // Bounding box of zone 0 (col0,row0) and zone 4 (col1,row1) is cols 0-1,
+        // rows 0-1 ⇒ zones 0,1,3,4.
+        let zones = GridCalculation.zonesInSpan(fromZone: 0, toZone: 4, layout: layout)
+        XCTAssertEqual(zones, [0, 1, 3, 4])
+        assertUnionMatchesSelection(zones, from: 0, to: 4, layout: layout)
+    }
+
+    /// A single zone spans only itself.
+    func testZonesInSpanSingleZoneIsItself() {
+        let layout = uniform3x2()
+        XCTAssertEqual(GridCalculation.zonesInSpan(fromZone: 4, toZone: 4, layout: layout), [4])
+    }
+
+    /// A merged zone is included whole when it fits inside the bounding range. The
+    /// mergedTop layout has the wide merged zone 9 (cols 0-1, row 0). Spanning from
+    /// it to the bottom-right (4) covers the whole grid ⇒ all zones, and the union
+    /// equals the selectionRect.
+    func testZonesInSpanWithMergedZone() {
+        let layout = mergedTop()
+        // ids:  row 0: 9 9 1 ; row 1: 2 3 4.
+        let zones = GridCalculation.zonesInSpan(fromZone: 9, toZone: 4, layout: layout)
+        XCTAssertEqual(zones, Set(layout.zoneIds))
+        assertUnionMatchesSelection(zones, from: 9, to: 4, layout: layout)
+
+        // A narrower span that does NOT fully contain the wide merged zone must
+        // exclude it: from zone 1 (col2,row0) to zone 2 (col0,row1) bounds cols
+        // 0-2, rows 0-1 → that DOES contain all of zone 9 too, so use a tighter
+        // range. From zone 1 (col2,row0) to zone 4 (col2,row1) bounds col 2 only,
+        // rows 0-1 ⇒ {1, 4}; zone 9 (cols 0-1) is excluded.
+        let narrow = GridCalculation.zonesInSpan(fromZone: 1, toZone: 4, layout: layout)
+        XCTAssertEqual(narrow, [1, 4])
+        XCTAssertFalse(narrow.contains(9))
+    }
+
+    /// Both endpoints unknown ⇒ empty set.
+    func testZonesInSpanBothUnknownIsEmpty() {
+        XCTAssertTrue(GridCalculation.zonesInSpan(fromZone: 998, toZone: 999, layout: uniform3x2()).isEmpty)
+    }
+
+    /// Union of a span's zone rects must equal `selectionRect(from:to:)` so the
+    /// highlighted footprint matches the committed rect.
+    private func assertUnionMatchesSelection(_ zones: Set<Int>, from: Int, to: Int, layout: ZoneLayout,
+                                             file: StaticString = #file, line: UInt = #line) {
+        var union: CGRect = .null
+        for z in zones {
+            union = union.union(GridCalculation.zoneRect(layout: layout, zoneId: z, in: area))
+        }
+        let selection = GridCalculation.selectionRect(layout: layout, fromZone: from, toZone: to, in: area)
+        assertRect(union, selection, file: file, line: line)
+    }
+
     // MARK: - Gap-aware convenience
 
     func testZoneRectWithGapsInsetsTheRect() {

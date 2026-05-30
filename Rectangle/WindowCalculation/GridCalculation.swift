@@ -155,6 +155,44 @@ enum GridCalculation {
         return a.union(b)
     }
 
+    /// The set of zone ids whose cells lie within the bounding cell-range of
+    /// `fromZone` and `toZone` (min..max col, min..max row across both zones'
+    /// cells). Powers the drag-span overlay: every zone in the returned set is
+    /// highlighted, and for uniform / simple layouts the union of those zones'
+    /// rects equals `selectionRect(fromZone:toZone:in:)`.
+    ///
+    /// A zone is included iff EVERY one of its cells lies inside the bounding
+    /// cell-range, so partially-overlapping merged zones that would push the
+    /// highlight (and therefore the committed rect) outside the selection box are
+    /// excluded — keeping the highlight consistent with `selectionRect`. If either
+    /// endpoint is unknown, falls back to the cell-range of the known one; returns
+    /// an empty set only when both are unknown.
+    static func zonesInSpan(fromZone: Int, toZone: Int, layout: ZoneLayout) -> Set<Int> {
+        let fromCells = cells(of: fromZone, in: layout)
+        let toCells = cells(of: toZone, in: layout)
+        let cellsForBounds = fromCells + toCells
+        guard !cellsForBounds.isEmpty else { return [] }
+
+        let minCol = cellsForBounds.map { $0.col }.min()!
+        let maxCol = cellsForBounds.map { $0.col }.max()!
+        let minRow = cellsForBounds.map { $0.row }.min()!
+        let maxRow = cellsForBounds.map { $0.row }.max()!
+
+        // A zone is in the span iff all of its cells fall inside the bounding range.
+        var result: Set<Int> = []
+        for zoneId in layout.zoneIds {
+            let zoneCells = cells(of: zoneId, in: layout)
+            guard !zoneCells.isEmpty else { continue }
+            let allInside = zoneCells.allSatisfy {
+                $0.col >= minCol && $0.col <= maxCol && $0.row >= minRow && $0.row <= maxRow
+            }
+            if allInside {
+                result.insert(zoneId)
+            }
+        }
+        return result
+    }
+
     // MARK: - Neighbor graph
 
     /// The zone immediately adjacent to `zoneId` in `direction`, or `nil` at a wall.

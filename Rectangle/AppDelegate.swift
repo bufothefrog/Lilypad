@@ -785,7 +785,7 @@ extension AppDelegate {
 
         let overlay = GridOverlayWindow()
         // Highlight the first zone so the fill path is exercised too.
-        overlay.show(layout: layout, on: screen, highlightZone: layout.zoneIds.first)
+        overlay.show(layout: layout, on: screen, highlightZones: layout.zoneIds.first.map { [$0] } ?? [])
         debugGridOverlay = overlay
 
         debugGridOverlayHideTimer?.invalidate()

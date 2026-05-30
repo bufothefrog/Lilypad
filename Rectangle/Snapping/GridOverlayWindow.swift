@@ -70,11 +70,16 @@ class GridOverlayWindow: NSWindow {
 
     // MARK: - Public surface
 
-    /// Show `layout`'s zones on `screen`, optionally filling `highlightZone`.
+    /// Show `layout`'s zones on `screen`, filling every zone in `highlightZones`.
     ///
     /// Sets the window frame to the screen's full frame, computes each zone's
     /// rect in the overlay view's local coordinates via `overlayZoneFrames`,
     /// hands them to the view, and fades the window in at the front.
+    ///
+    /// `highlightZones` is a SET (M6): the single-zone drag path passes a
+    /// one-element set; the span sub-mode passes the whole spanned set so every
+    /// spanned zone reads as selected. An empty set means no zone is filled
+    /// "selected".
     ///
     /// Hardened for RAPID REUSE (M5): a single instance is shown/hidden many
     /// times per drag, sometimes with overlapping animations. We therefore
@@ -84,7 +89,7 @@ class GridOverlayWindow: NSWindow {
     /// disabled we set alpha and order in/out instantly, with no animation.
     /// Re-showing with a different layout/highlight re-renders cleanly because
     /// the view is updated every call.
-    func show(layout: ZoneLayout, on screen: NSScreen, highlightZone: Int? = nil) {
+    func show(layout: ZoneLayout, on screen: NSScreen, highlightZones: Set<Int> = []) {
         let screenFrame = screen.frame
         let visibleFrame = screen.adjustedVisibleFrame()
 
@@ -96,7 +101,7 @@ class GridOverlayWindow: NSWindow {
 
         setFrame(screenFrame, display: false)
         gridView.frame = NSRect(origin: .zero, size: screenFrame.size)
-        gridView.update(zoneFrames: frames, highlightZone: highlightZone)
+        gridView.update(zoneFrames: frames, highlightZones: highlightZones)
 
         // Cancel any in-flight hide so its completion handler doesn't order us out.
         orderOutCanceled = true
@@ -194,26 +199,26 @@ class GridOverlayWindow: NSWindow {
 /// matching the Cocoa bottom-left rects produced by `overlayZoneFrames`. Each zone
 /// is painted like Rectangle's drag footprint — an opaque fill with a light-gray
 /// rounded border — while the window's `footprintAlpha` supplies the translucency.
-/// The selected (highlighted) zone uses the prominent dark fill; unselected zones a
+/// The selected (highlighted) zones use the prominent dark fill; unselected zones a
 /// lighter one. Fills are user-configurable (`gridSelectedZoneColor` /
 /// `gridUnselectedZoneColor`, with `gridUseAccentForSelected` for the system accent).
 private class GridOverlayView: NSView {
 
     private var zoneFrames: [Int: CGRect] = [:]
-    private var highlightZone: Int?
+    private var highlightZones: Set<Int> = []
 
     override var isFlipped: Bool { false }
 
-    func update(zoneFrames: [Int: CGRect], highlightZone: Int?) {
+    func update(zoneFrames: [Int: CGRect], highlightZones: Set<Int>) {
         self.zoneFrames = zoneFrames
-        self.highlightZone = highlightZone
+        self.highlightZones = highlightZones
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
         // Each zone is drawn like Rectangle's drag footprint: an opaque fill with a
         // light-gray rounded border; the window's footprintAlpha supplies the
-        // translucency (no pre-multiplied alpha). The selected (highlighted) zone is
+        // translucency (no pre-multiplied alpha). The selected (highlighted) zones are
         // the prominent dark fill; unselected zones a lighter one. Fills are
         // user-configurable, with these as defaults.
         let selectedColor: NSColor = Defaults.gridUseAccentForSelected.userEnabled
@@ -233,7 +238,7 @@ private class GridOverlayView: NSView {
             guard tile.width > 0, tile.height > 0 else { continue }
             let path = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
 
-            (zoneId == highlightZone ? selectedColor : unselectedColor).setFill()
+            (highlightZones.contains(zoneId) ? selectedColor : unselectedColor).setFill()
             path.fill()
 
             NSColor.lightGray.setStroke()
