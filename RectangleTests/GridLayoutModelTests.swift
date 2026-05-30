@@ -85,5 +85,8 @@ class GridLayoutModelTests: XCTestCase {
         XCTAssertTrue(keys.contains("gridModeEnabled"))
         XCTAssertTrue(keys.contains("gridLayoutsByDisplay"))
         XCTAssertTrue(keys.contains("gridSpanModifier"))
+        XCTAssertTrue(keys.contains("gridSelectedZoneColor"))
+        XCTAssertTrue(keys.contains("gridUnselectedZoneColor"))
+        XCTAssertTrue(keys.contains("gridUseAccentForSelected"))
     }
 }

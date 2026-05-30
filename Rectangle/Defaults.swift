@@ -111,6 +111,13 @@ class Defaults {
     /// Modifier held during a grid drag to extend a multi-zone span. Default Option (matches BentoBox);
     /// stored as an NSEvent.ModifierFlags rawValue, configurable like snapModifiers.
     static let gridSpanModifier = IntDefault(key: "gridSpanModifier", defaultValue: Int(NSEvent.ModifierFlags.option.rawValue))
+    /// Grid overlay zone fill colors (CodableColor JSON; nil falls back to in-code defaults —
+    /// see GridOverlayView). Selected/highlighted zone defaults to the footprint dark grey;
+    /// unselected zones to a lighter grey.
+    static let gridSelectedZoneColor = JSONDefault<CodableColor>(key: "gridSelectedZoneColor")
+    static let gridUnselectedZoneColor = JSONDefault<CodableColor>(key: "gridUnselectedZoneColor")
+    /// When enabled, the selected zone uses the system accent color instead of gridSelectedZoneColor.
+    static let gridUseAccentForSelected = OptionalBoolDefault(key: "gridUseAccentForSelected")
 
     static var array: [Default] = [
         launchOnLogin,
@@ -201,7 +208,10 @@ class Defaults {
         showAdditionalSizesInMenu,
         gridModeEnabled,
         gridLayoutsByDisplay,
-        gridSpanModifier
+        gridSpanModifier,
+        gridSelectedZoneColor,
+        gridUnselectedZoneColor,
+        gridUseAccentForSelected
     ]
 }
 

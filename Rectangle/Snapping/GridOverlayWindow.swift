@@ -156,9 +156,11 @@ class GridOverlayWindow: NSWindow {
 ///
 /// Intentionally NON-FLIPPED (`isFlipped == false`) so its local y grows upward,
 /// matching the Cocoa bottom-left rects produced by `overlayZoneFrames`. Each zone
-/// is painted like Rectangle's drag footprint — an opaque `footprintColor` fill
-/// with a light-gray rounded border — while the window's `footprintAlpha` supplies
-/// the translucency. The highlighted zone is accented so the snap target stands out.
+/// is painted like Rectangle's drag footprint — an opaque fill with a light-gray
+/// rounded border — while the window's `footprintAlpha` supplies the translucency.
+/// The selected (highlighted) zone uses the prominent dark fill; unselected zones a
+/// lighter one. Fills are user-configurable (`gridSelectedZoneColor` /
+/// `gridUnselectedZoneColor`, with `gridUseAccentForSelected` for the system accent).
 private class GridOverlayView: NSView {
 
     private var zoneFrames: [Int: CGRect] = [:]
@@ -173,11 +175,15 @@ private class GridOverlayView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // Each zone is drawn like Rectangle's drag footprint: an OPAQUE
-        // footprintColor fill with a light-gray rounded border. The window's
-        // alphaValue (footprintAlpha) supplies the translucency, exactly as
-        // FootprintWindow does — so we do not pre-multiply alpha into the colors.
-        let footprintColor = Defaults.footprintColor.typedValue?.nsColor ?? NSColor.black
+        // Each zone is drawn like Rectangle's drag footprint: an opaque fill with a
+        // light-gray rounded border; the window's footprintAlpha supplies the
+        // translucency (no pre-multiplied alpha). The selected (highlighted) zone is
+        // the prominent dark fill; unselected zones a lighter one. Fills are
+        // user-configurable, with these as defaults.
+        let selectedColor: NSColor = Defaults.gridUseAccentForSelected.userEnabled
+            ? .controlAccentColor
+            : (Defaults.gridSelectedZoneColor.typedValue?.nsColor ?? GridOverlayView.defaultSelectedColor)
+        let unselectedColor = Defaults.gridUnselectedZoneColor.typedValue?.nsColor ?? GridOverlayView.defaultUnselectedColor
         let borderWidth = CGFloat(Defaults.footprintBorderWidth.value)
         let radius = GridOverlayView.cornerRadius
         // A small gap so adjacent zones read as separate rounded footprints rather
@@ -191,9 +197,7 @@ private class GridOverlayView: NSView {
             guard tile.width > 0, tile.height > 0 else { continue }
             let path = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
 
-            // The highlighted zone uses the accent color so the snap target pops;
-            // every other zone gets the standard footprint fill.
-            (zoneId == highlightZone ? NSColor.controlAccentColor : footprintColor).setFill()
+            (zoneId == highlightZone ? selectedColor : unselectedColor).setFill()
             path.fill()
 
             NSColor.lightGray.setStroke()
@@ -201,6 +205,11 @@ private class GridOverlayView: NSView {
             path.stroke()
         }
     }
+
+    /// Default selected-zone fill: the footprint dark grey (matches the drag preview).
+    static let defaultSelectedColor = NSColor.black
+    /// Default unselected-zone fill: a lighter grey.
+    static let defaultUnselectedColor = NSColor(white: 0.6, alpha: 1)
 
     /// Footprint corner radius, matching FootprintWindow across macOS versions.
     private static var cornerRadius: CGFloat {
