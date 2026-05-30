@@ -46,6 +46,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Layouts UI lands (M14) and the overlay is driven by actual drag/keyboard.
     private var debugGridOverlay: GridOverlayWindow?
     private var debugGridOverlayHideTimer: Timer?
+    // TEMPORARY (M5): the "Debug: Toggle Grid Mode" status item, kept so its
+    // checkmark can reflect Defaults.gridModeEnabled. Remove with the M14 settings UI.
+    private var debugGridModeToggleItem: NSMenuItem?
 
     @IBOutlet weak var mainStatusMenu: NSMenu!
     @IBOutlet weak var unauthorizedMenu: NSMenu!
@@ -722,17 +725,39 @@ extension AppDelegate: SPUStandardUserDriverDelegate {
 // the real Layouts UI (M14) drives the overlay from actual drag/keyboard input.
 extension AppDelegate {
 
-    /// Appends the "Debug: Show Grid Overlay" item to the main status menu.
+    /// Appends the "Debug: Show Grid Overlay" item to the main status menu, plus a
+    /// sibling "Debug: Toggle Grid Mode" item (M5) so a human can enable grid mode
+    /// without the CLI before the real settings land.
     fileprivate func addDebugGridOverlayMenuItem() {
-        let item = NSMenuItem(
+        // Append at the end so it doesn't shift the dynamic-item index math.
+        mainStatusMenu.addItem(NSMenuItem.separator())
+
+        let overlayItem = NSMenuItem(
             title: "Debug: Show Grid Overlay",
             action: #selector(showGridOverlayDebug),
             keyEquivalent: ""
         )
-        item.target = self
-        // Append at the end so it doesn't shift the dynamic-item index math.
-        mainStatusMenu.addItem(NSMenuItem.separator())
-        mainStatusMenu.addItem(item)
+        overlayItem.target = self
+        mainStatusMenu.addItem(overlayItem)
+
+        // TEMPORARY (M5): toggles Defaults.gridModeEnabled so a human can turn the
+        // Lilypad grid drag path on/off without the CLI. Remove with the real
+        // settings UI (M14). The checkmark reflects the current flag state.
+        let toggleItem = NSMenuItem(
+            title: "Debug: Toggle Grid Mode",
+            action: #selector(toggleGridModeDebug(_:)),
+            keyEquivalent: ""
+        )
+        toggleItem.target = self
+        toggleItem.state = Defaults.gridModeEnabled.enabled ? .on : .off
+        debugGridModeToggleItem = toggleItem
+        mainStatusMenu.addItem(toggleItem)
+    }
+
+    /// Flips `Defaults.gridModeEnabled` and updates the menu checkmark. TEMPORARY (M5).
+    @objc fileprivate func toggleGridModeDebug(_ sender: NSMenuItem) {
+        Defaults.gridModeEnabled.enabled.toggle()
+        sender.state = Defaults.gridModeEnabled.enabled ? .on : .off
     }
 
     /// Shows the overlay on the screen under the cursor using that display's

@@ -9,21 +9,60 @@
 import Cocoa
 
 class WindowManager {
-    
+
+    /// The live instance, captured at init so non-shortcut callers (e.g. the
+    /// grid drag-snap commit in SnappingManager) can reuse the window-mover
+    /// chain + history recording instead of hand-rolling setFrame.
+    static private(set) var instance: WindowManager?
+
     private let screenDetection = ScreenDetection()
     private let standardWindowMoverChain: [WindowMover]
     private let fixedSizeWindowMoverChain: [WindowMover]
-    
+
     init() {
         standardWindowMoverChain = [
             StandardWindowMover(),
             BestEffortWindowMover()
         ]
-        
+
         fixedSizeWindowMoverChain = [
             CenteringFixedSizedWindowMover(),
             BestEffortWindowMover()
         ]
+
+        WindowManager.instance = self
+    }
+
+    /// Move/resize `windowElement` to a PRECOMPUTED rect (Cocoa bottom-left, the
+    /// same space as `NSScreen.adjustedVisibleFrame`) on `screen`, reusing the
+    /// existing window-mover chains and recording the action in window history so
+    /// unsnap-restore keeps working. This is the rect-carrying apply path for the
+    /// Lilypad grid drag-snap (M5): the zone rect is produced by `GridCalculation`
+    /// rather than a `WindowCalculation`, so it bypasses `execute`'s action math
+    /// but otherwise behaves like a drag-to-snap commit (records `.specified` so
+    /// the restore/history bookkeeping mirrors a normal snap).
+    func applyGridRect(_ cocoaRect: CGRect, screen: NSScreen, windowElement: AccessibilityElement, windowId: CGWindowID) {
+        let frameOfScreen = screen.frame
+        let ignoreTodo = TodoManager.isTodoWindow(windowId)
+        let visibleFrameOfScreen = screen.adjustedVisibleFrame(ignoreTodo)
+
+        // A fixed-size (non-resizable) window can't fill the zone; center it in the
+        // zone instead, matching how the normal snap path handles fixed-size windows.
+        let isFixedSize = !windowElement.isResizable() || windowElement.isSystemDialog == true
+        let windowMoverChain = isFixedSize ? fixedSizeWindowMoverChain : standardWindowMoverChain
+
+        // Movers operate in top-left (screen-flipped) space, as in `apply`.
+        let newRect = cocoaRect.screenFlipped
+        for windowMover in windowMoverChain {
+            windowMover.moveWindowRect(newRect,
+                                       frameOfScreen: frameOfScreen,
+                                       visibleFrameOfScreen: visibleFrameOfScreen,
+                                       frontmostWindowElement: windowElement,
+                                       action: .specified)
+        }
+
+        let resultingRect = windowElement.frame
+        recordAction(windowId: windowId, resultingRect: resultingRect, action: .specified, subAction: nil)
     }
     
     private func recordAction(windowId: CGWindowID, resultingRect: CGRect, action: WindowAction, subAction: SubWindowAction?) {

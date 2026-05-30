@@ -84,6 +84,7 @@ class GridLayoutModelTests: XCTestCase {
         let keys = Defaults.array.map { $0.key }
         XCTAssertTrue(keys.contains("gridModeEnabled"))
         XCTAssertTrue(keys.contains("gridLayoutsByDisplay"))
+        XCTAssertTrue(keys.contains("gridActivationModifier"))
         XCTAssertTrue(keys.contains("gridSpanModifier"))
         XCTAssertTrue(keys.contains("gridSelectedZoneColor"))
         XCTAssertTrue(keys.contains("gridUnselectedZoneColor"))

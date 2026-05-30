@@ -75,6 +75,15 @@ class GridOverlayWindow: NSWindow {
     /// Sets the window frame to the screen's full frame, computes each zone's
     /// rect in the overlay view's local coordinates via `overlayZoneFrames`,
     /// hands them to the view, and fades the window in at the front.
+    ///
+    /// Hardened for RAPID REUSE (M5): a single instance is shown/hidden many
+    /// times per drag, sometimes with overlapping animations. We therefore
+    /// (a) mark `orderOutCanceled = true` BEFORE starting any fade so a hide()
+    /// that began first can't strand us ordered-out, and (b) honor
+    /// `footprintFade.userDisabled` exactly like FootprintWindow — when fade is
+    /// disabled we set alpha and order in/out instantly, with no animation.
+    /// Re-showing with a different layout/highlight re-renders cleanly because
+    /// the view is updated every call.
     func show(layout: ZoneLayout, on screen: NSScreen, highlightZone: Int? = nil) {
         let screenFrame = screen.frame
         let visibleFrame = screen.adjustedVisibleFrame()
@@ -89,17 +98,44 @@ class GridOverlayWindow: NSWindow {
         gridView.frame = NSRect(origin: .zero, size: screenFrame.size)
         gridView.update(zoneFrames: frames, highlightZone: highlightZone)
 
+        // Cancel any in-flight hide so its completion handler doesn't order us out.
         orderOutCanceled = true
+
+        let targetAlpha = CGFloat(Defaults.footprintAlpha.value)
+        if Defaults.footprintFade.userDisabled {
+            // Fade disabled: snap to visible with no animation.
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                alphaValue = targetAlpha
+            }
+            orderFront(nil)
+            return
+        }
+
         orderFront(nil)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.12
-            animator().alphaValue = CGFloat(Defaults.footprintAlpha.value)
+            animator().alphaValue = targetAlpha
         }
     }
 
     /// Fade the overlay out and order it off-screen.
+    ///
+    /// Cancels any in-flight fade-in (by clearing `orderOutCanceled`) so the
+    /// window can't be left visible after rapid show→hide. When fade is disabled
+    /// we order out instantly.
     func hide() {
         orderOutCanceled = false
+
+        if Defaults.footprintFade.userDisabled {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                alphaValue = 0
+            }
+            orderOut(nil)
+            return
+        }
+
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.12
             animator().alphaValue = 0
