@@ -101,6 +101,12 @@ class Defaults {
     static let systemWideMouseDownApps = JSONDefault<Set<String>>(key:"systemWideMouseDownApps", defaultValue: Set<String>(["org.languagetool.desktop", "com.microsoft.teams2"]))
     static let internalTilingNotified = BoolDefault(key: "internalTilingNotified")
     static let screensOrderedByX = OptionalBoolDefault(key: "screensOrderedByX")
+
+    // MARK: - Lilypad (grid system)
+    /// Master toggle for the Lilypad grid system. While false, classic edge snapping is used.
+    /// Built additively so the grid path can be developed without disrupting existing behavior.
+    static let gridModeEnabled = BoolDefault(key: "gridModeEnabled")
+
     static var array: [Default] = [
         launchOnLogin,
         disabledApps,
@@ -187,7 +193,8 @@ class Defaults {
         systemWideMouseDown,
         systemWideMouseDownApps,
         screensOrderedByX,
-        showAdditionalSizesInMenu
+        showAdditionalSizesInMenu,
+        gridModeEnabled
     ]
 }
 
