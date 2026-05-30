@@ -11,15 +11,8 @@ import AppKit
 class SnapAreaModel {
     static let instance = SnapAreaModel()
 
-    private init() {
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in self?.recordCurrentDisplays() }
-        recordCurrentDisplays()
-    }
-    
+    private init() {}
+
     static let defaultLandscape: [Directional:SnapAreaConfig] = [
         .tl: SnapAreaConfig(action: .topLeft),
         .t: SnapAreaConfig(action: .maximize),
@@ -88,72 +81,20 @@ class SnapAreaModel {
         Defaults.snapAreasByDisplay.typedValue = byDisplay
     }
 
-    // MARK: - Known displays registry
+    // MARK: - Known displays registry (delegated to DisplayRegistry)
 
-    /// Records every currently-connected display in `Defaults.knownDisplays`
-    /// so disconnected displays can still be configured later. Called at init
-    /// and on every screen-parameters change.
-    func recordCurrentDisplays() {
-        var registry = Defaults.knownDisplays.typedValue ?? [:]
-        let now = Date()
-        var changed = false
-        for screen in NSScreen.screens {
-            guard let uuid = screen.displayUUIDString else { continue }
-            let name = screen.localizedName
-            // Skip displays whose name hasn't resolved yet. macOS briefly
-            // enumerates displays mid-handshake (e.g. while docking) before
-            // their EDID name is available; recording those would leave
-            // permanent unnamed "phantom" entries in the registry.
-            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            registry[uuid] = KnownDisplay(name: name, lastSeen: now)
-            changed = true
-        }
-        if changed {
-            Defaults.knownDisplays.typedValue = registry
-        }
-    }
-
-    /// All displays Rectangle knows about — currently connected ones first
-    /// (in `NSScreen.screens` order), then any previously-seen displays that
-    /// aren't currently connected. Names are disambiguated when duplicated.
+    /// All displays Rectangle knows about. Delegates to `DisplayRegistry`; kept
+    /// as a thin wrapper so `SnapAreaViewController` is unaffected by the
+    /// registry extraction.
     func allKnownDisplays() -> [DisplayChoice] {
-        var seen: Set<String> = []
-        var rawChoices: [(uuid: String, name: String, isConnected: Bool)] = []
-        for screen in NSScreen.screens {
-            guard let uuid = screen.displayUUIDString else { continue }
-            rawChoices.append((uuid, screen.localizedName, true))
-            seen.insert(uuid)
-        }
-        let registry = Defaults.knownDisplays.typedValue ?? [:]
-        let disconnected = registry
-            .filter { !seen.contains($0.key) }
-            .sorted { $0.value.lastSeen > $1.value.lastSeen }
-        for (uuid, info) in disconnected {
-            rawChoices.append((uuid, info.name, false))
-        }
-
-        var nameCounts: [String: Int] = [:]
-        for c in rawChoices { nameCounts[c.name, default: 0] += 1 }
-        var nameSeen: [String: Int] = [:]
-        return rawChoices.map { c in
-            let displayName: String
-            if (nameCounts[c.name] ?? 0) > 1 {
-                nameSeen[c.name, default: 0] += 1
-                displayName = "\(c.name) (\(nameSeen[c.name]!))"
-            } else {
-                displayName = c.name
-            }
-            return DisplayChoice(uuid: c.uuid, name: displayName, isConnected: c.isConnected)
-        }
+        DisplayRegistry.instance.allKnownDisplays()
     }
 
-    /// Removes a previously-seen display from the registry and any per-display
-    /// override that referenced it. Useful for cleaning up monitors the user
-    /// no longer has.
+    /// Forgets a previously-seen display: removes it from the registry AND clears
+    /// any per-display snap-area override that referenced it (preserving the
+    /// original semantics). Delegates the registry removal to `DisplayRegistry`.
     func forgetDisplay(uuid: String) {
-        var registry = Defaults.knownDisplays.typedValue ?? [:]
-        registry.removeValue(forKey: uuid)
-        Defaults.knownDisplays.typedValue = registry
+        DisplayRegistry.instance.forgetDisplay(uuid: uuid)
         clearOverride(displayUUID: uuid)
     }
 
@@ -246,21 +187,6 @@ struct SnapAreaConfig: Codable {
         self.compound = compound
         self.action = action
     }
-}
-
-/// Persistent record of a display Rectangle has seen at least once,
-/// keyed by display UUID in `Defaults.knownDisplays`. Lets the Snap Areas
-/// settings UI offer disconnected displays for configuration.
-struct KnownDisplay: Codable {
-    var name: String
-    var lastSeen: Date
-}
-
-/// One row in the per-display settings dropdown.
-struct DisplayChoice {
-    let uuid: String
-    let name: String
-    let isConnected: Bool
 }
 
 /// Per-display override of snap area config for one physical monitor,

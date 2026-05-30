@@ -47,9 +47,10 @@ class SnappingManager {
     private let marginRight = Defaults.snapEdgeMarginRight.cgFloat
     
     init() {
-        // Force lazy init of SnapAreaModel so its known-displays registry
-        // observer is installed at launch, not on the first drag.
-        _ = SnapAreaModel.instance
+        // Force lazy init of DisplayRegistry so the known-displays registry
+        // observer (didChangeScreenParametersNotification) is installed at
+        // launch, not on the first drag.
+        _ = DisplayRegistry.instance
 
         if Defaults.windowSnapping.enabled != false {
             enableSnapping()

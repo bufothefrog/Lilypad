@@ -1,0 +1,133 @@
+//
+//  GridModel.swift
+//  Rectangle / Lilypad
+//
+//  The runtime model for per-monitor named grid layouts, analogous to
+//  `SnapAreaModel.instance`. Backed by `Defaults.gridLayoutsByDisplay`
+//  (`[displayUUID -> PerDisplayLayouts]`) and enumerating displays through
+//  `DisplayRegistry`.
+//
+//  All mutations use the copy-mutate-writeback idiom (copy the typed dictionary
+//  or an empty one, mutate the per-UUID `PerDisplayLayouts`, assign it back so
+//  the `JSONDefault` re-serializes), mirroring `SnapAreaModel.setConfig`.
+//
+
+import Foundation
+
+class GridModel {
+    static let instance = GridModel()
+
+    private init() {}
+
+    // MARK: - Read
+
+    /// The layouts configured for `displayUUID`, or an empty set if the display
+    /// has no entry yet (unknown displays return empty rather than nil).
+    func layouts(forDisplay displayUUID: String) -> PerDisplayLayouts {
+        Defaults.gridLayoutsByDisplay.typedValue?[displayUUID] ?? PerDisplayLayouts()
+    }
+
+    /// The active `ZoneLayout` for `displayUUID`, if any (falls back to the first
+    /// layout when no `activeLayoutId` is explicitly set; nil when there are none).
+    func activeLayout(forDisplay displayUUID: String) -> ZoneLayout? {
+        layouts(forDisplay: displayUUID).activeLayout
+    }
+
+    // MARK: - Mutations (copy-mutate-writeback)
+
+    /// Appends `layout` to `displayUUID`'s layouts. If the display had no
+    /// layouts before, the new one becomes active.
+    func addLayout(_ layout: ZoneLayout, forDisplay displayUUID: String) {
+        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        var perDisplay = byDisplay[displayUUID] ?? PerDisplayLayouts()
+        var newLayout = layout
+        // Ids must be unique within a display — rename/remove/setActive all key on
+        // id, so a collision (e.g. two quick-starters sharing a generator default
+        // id) would target the wrong layout. Reassign a fresh id on collision.
+        if perDisplay.layouts.contains(where: { $0.id == newLayout.id }) {
+            newLayout.id = UUID().uuidString
+        }
+        perDisplay.layouts.append(newLayout)
+        if perDisplay.activeLayoutId == nil {
+            perDisplay.activeLayoutId = newLayout.id
+        }
+        byDisplay[displayUUID] = perDisplay
+        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+    }
+
+    /// Renames the layout with `id` on `displayUUID`. No-op if not found.
+    func renameLayout(id: String, to newName: String, forDisplay displayUUID: String) {
+        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        guard var perDisplay = byDisplay[displayUUID],
+              let index = perDisplay.layouts.firstIndex(where: { $0.id == id })
+        else { return }
+        perDisplay.layouts[index].name = newName
+        byDisplay[displayUUID] = perDisplay
+        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+    }
+
+    /// Removes the layout with `id` from `displayUUID`. If the removed layout was
+    /// active, `activeLayoutId` is repointed to the first remaining layout (or
+    /// cleared when none remain).
+    func removeLayout(id: String, forDisplay displayUUID: String) {
+        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        guard var perDisplay = byDisplay[displayUUID],
+              perDisplay.layouts.contains(where: { $0.id == id })
+        else { return }
+        perDisplay.layouts.removeAll { $0.id == id }
+        if perDisplay.activeLayoutId == id {
+            perDisplay.activeLayoutId = perDisplay.layouts.first?.id
+        }
+        byDisplay[displayUUID] = perDisplay
+        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+    }
+
+    /// Marks the layout with `id` as active on `displayUUID`. No-op if no layout
+    /// with that id exists for the display.
+    func setActiveLayout(id: String, forDisplay displayUUID: String) {
+        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        guard var perDisplay = byDisplay[displayUUID],
+              perDisplay.layouts.contains(where: { $0.id == id })
+        else { return }
+        perDisplay.activeLayoutId = id
+        byDisplay[displayUUID] = perDisplay
+        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+    }
+
+    // MARK: - Seeding
+
+    /// Seeds a sensible starter set of layouts for each UUID in `displays` that
+    /// has no existing `PerDisplayLayouts`. Idempotent: a display that already
+    /// has an entry is never overwritten, so this is safe to call on every
+    /// launch / migration. Returns the UUIDs that were actually seeded.
+    ///
+    /// Pure and testable — takes the UUID list as a parameter rather than reading
+    /// from `DisplayRegistry`, so callers control which displays to seed.
+    @discardableResult
+    func seedDefaultLayouts(forDisplays displays: [String]) -> [String] {
+        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        var seeded: [String] = []
+        for uuid in displays {
+            // An existing entry — even an empty one (e.g. the user removed a
+            // display's last layout) — counts as "already configured" and is left
+            // untouched; only displays with no entry at all are seeded.
+            guard byDisplay[uuid] == nil else { continue }
+            byDisplay[uuid] = GridModel.starterLayouts()
+            seeded.append(uuid)
+        }
+        if !seeded.isEmpty {
+            Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+        }
+        return seeded
+    }
+
+    /// The default starter set for a freshly-seeded display: a 2×2 grid (active)
+    /// plus a 3×2 grid, built with the M2 quick-starter generators.
+    static func starterLayouts() -> PerDisplayLayouts {
+        // Fresh unique ids per seeded display (the human label stays in `name`),
+        // so ids are safe for the add/rename/remove UI in later milestones.
+        let grid2x2 = ZoneLayout.grid2x2(id: UUID().uuidString)
+        let grid3x2 = ZoneLayout.grid3x2(id: UUID().uuidString)
+        return PerDisplayLayouts(layouts: [grid2x2, grid3x2], activeLayoutId: grid2x2.id)
+    }
+}

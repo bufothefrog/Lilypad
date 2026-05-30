@@ -119,9 +119,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     SMLoginItemSetEnabled(AppDelegate.launcherAppId as CFString, false)
                 }
             }
+            if intLastVersion < 102 {
+                // Lilypad: seed sensible starter grid layouts for every display
+                // we currently know about. Idempotent — only displays without
+                // existing layouts are seeded; no semantic snap-area→grid migration.
+                GridModel.instance.seedDefaultLayouts(forDisplays: DisplayRegistry.instance.knownDisplayUUIDs())
+            }
         } else {
             Defaults.installVersion.value = currentVersion
             Defaults.allowAnyShortcut.enabled = true
+            // Lilypad: fresh installs are intentionally not grid-seeded here — grid
+            // mode is off by default, and starter layouts are created on demand when
+            // the Layouts UI lands (M14).
         }
         
         Defaults.lastVersion.value = currentVersion
