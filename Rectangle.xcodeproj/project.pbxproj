@@ -99,6 +99,7 @@
 		B11A0000000000000000A002 /* GridLayoutModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000A001 /* GridLayoutModel.swift */; };
 		B11A0000000000000000E002 /* DisplayRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000E001 /* DisplayRegistry.swift */; };
 		B11A0000000000000000F002 /* GridModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000F001 /* GridModel.swift */; };
+		B11A0000000000000000C502 /* GridLayoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000C501 /* GridLayoutManager.swift */; };
 		984EDB0F29A42ED200D119D2 /* LaunchOnLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 984EDB0E29A42ED200D119D2 /* LaunchOnLogin.swift */; };
 		9851A5C3251BEBA300ECF78C /* OrientationAware.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9851A5C2251BEBA300ECF78C /* OrientationAware.swift */; };
 		985B9BF522B93EEC00A2E8F0 /* ApplicationToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 985B9BF422B93EEC00A2E8F0 /* ApplicationToggle.swift */; };
@@ -329,6 +330,7 @@
 		B11A0000000000000000A001 /* GridLayoutModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridLayoutModel.swift; sourceTree = "<group>"; };
 		B11A0000000000000000E001 /* DisplayRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayRegistry.swift; sourceTree = "<group>"; };
 		B11A0000000000000000F001 /* GridModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridModel.swift; sourceTree = "<group>"; };
+		B11A0000000000000000C501 /* GridLayoutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridLayoutManager.swift; sourceTree = "<group>"; };
 		984EDB0E29A42ED200D119D2 /* LaunchOnLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchOnLogin.swift; sourceTree = "<group>"; };
 		9851A5C2251BEBA300ECF78C /* OrientationAware.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrientationAware.swift; sourceTree = "<group>"; };
 		985B9BF422B93EEC00A2E8F0 /* ApplicationToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationToggle.swift; sourceTree = "<group>"; };
@@ -788,6 +790,7 @@
 				B11A0000000000000000A001 /* GridLayoutModel.swift */,
 				B11A0000000000000000E001 /* DisplayRegistry.swift */,
 				B11A0000000000000000F001 /* GridModel.swift */,
+				B11A0000000000000000C501 /* GridLayoutManager.swift */,
 				9818E00E28B5922A004AA524 /* CompoundSnapArea */,
 			);
 			path = Snapping;
@@ -1066,6 +1069,7 @@
 				B11A0000000000000000A002 /* GridLayoutModel.swift in Sources */,
 				B11A0000000000000000E002 /* DisplayRegistry.swift in Sources */,
 				B11A0000000000000000F002 /* GridModel.swift in Sources */,
+				B11A0000000000000000C502 /* GridLayoutManager.swift in Sources */,
 				AA040C67290B2640003181D5 /* RunLoopThread.swift in Sources */,
 				9821402B22B388A000ABFB3F /* LowerRightCalculation.swift in Sources */,
 				D04CE30427817A6F00BD47B3 /* TopRightNinthCalculation.swift in Sources */,

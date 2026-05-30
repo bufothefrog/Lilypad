@@ -232,6 +232,39 @@ enum GridCalculation {
         }
     }
 
+    // MARK: - Keyboard navigation: window rect -> target zone
+
+    /// The zone a keyboard "move one zone in `direction`" should land the window in,
+    /// or `nil` if there is nowhere to go (the caller no-ops/beeps).
+    ///
+    /// Two cases, both pure and deterministic:
+    ///
+    /// 1. **Aligned window** — `rect` matches an existing zone within `tolerance`
+    ///    (`zone(matchingWindowRect:)`). The window is "in" that zone, so move to its
+    ///    `neighbor` in `direction`. If the matched zone is at the wall in `direction`
+    ///    (no neighbor), return `nil` — the window can't move further (per-edge wall
+    ///    actions arrive in M8).
+    ///
+    /// 2. **Unaligned / free window** — `rect` matches no zone. Capture it into the grid
+    ///    using the zone under the window's center (`zone(at:)`), then move toward the
+    ///    arrow: return that anchor's `neighbor`, falling back to the anchor itself when
+    ///    the anchor is already at the wall (so the first press snaps a free window into
+    ///    the grid AND nudges it, or captures-to-the-edge-zone when there's no neighbor).
+    ///    Returns `nil` only when the center is outside `area` (no anchor zone).
+    ///
+    /// `rect` and `area` are both in Cocoa bottom-left coords.
+    static func targetZone(forWindowRect rect: CGRect, in area: CGRect, layout: ZoneLayout, direction: Direction, tolerance: CGFloat = 25) -> Int? {
+        // Case 1: the window already fills a zone — hop to the neighbor (nil at a wall).
+        if let currentZone = zone(matchingWindowRect: rect, in: area, layout: layout, tolerance: tolerance) {
+            return neighbor(ofZone: currentZone, direction: direction, layout: layout)
+        }
+
+        // Case 2: a free window — anchor on the zone under its center, then nudge.
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        guard let anchor = zone(at: center, in: area, layout: layout) else { return nil }
+        return neighbor(ofZone: anchor, direction: direction, layout: layout) ?? anchor
+    }
+
     // MARK: - Gap-aware convenience
 
     /// `zoneRect` with Rectangle's standard gap inset applied via `GapCalculation`.

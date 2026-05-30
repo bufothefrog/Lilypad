@@ -141,7 +141,11 @@ enum WindowAction: Int, Codable {
          displaySix = 125,
          displaySeven = 126,
          displayEight = 127,
-         displayNine = 128
+         displayNine = 128,
+         gridMoveLeft = 129,
+         gridMoveRight = 130,
+         gridMoveUp = 131,
+         gridMoveDown = 132
 
     // Order matters here - it's used in the menu
     static let active = [leftHalf, rightHalf, centerHalf, topHalf, bottomHalf,
@@ -152,6 +156,7 @@ enum WindowAction: Int, Codable {
                          center, centerProminently, restore,
                          nextDisplay, previousDisplay,
                          moveLeft, moveRight, moveUp, moveDown,
+                         gridMoveLeft, gridMoveRight, gridMoveUp, gridMoveDown,
                          firstFourth, secondFourth, thirdFourth, lastFourth, firstThreeFourths, centerThreeFourths, lastThreeFourths,
                          topLeftSixth, topCenterSixth, topRightSixth, bottomLeftSixth, bottomCenterSixth, bottomRightSixth,
                          specified, reverseAll,
@@ -334,6 +339,10 @@ enum WindowAction: Int, Codable {
         case .displaySeven: return "displaySeven"
         case .displayEight: return "displayEight"
         case .displayNine: return "displayNine"
+        case .gridMoveLeft: return "gridMoveLeft"
+        case .gridMoveRight: return "gridMoveRight"
+        case .gridMoveUp: return "gridMoveUp"
+        case .gridMoveDown: return "gridMoveDown"
         }
     }
 
@@ -628,6 +637,18 @@ enum WindowAction: Int, Codable {
         case .displayOne, .displayTwo, .displayThree, .displayFour, .displayFive,
              .displaySix, .displaySeven, .displayEight, .displayNine:
             return nil
+        case .gridMoveLeft:
+            key = "gridMoveLeft.title"
+            value = "Grid Move Left"
+        case .gridMoveRight:
+            key = "gridMoveRight.title"
+            value = "Grid Move Right"
+        case .gridMoveUp:
+            key = "gridMoveUp.title"
+            value = "Grid Move Up"
+        case .gridMoveDown:
+            key = "gridMoveDown.title"
+            value = "Grid Move Down"
         }
 
         return NSLocalizedString(key, tableName: "Main", value: value, comment: "")
@@ -658,7 +679,7 @@ enum WindowAction: Int, Codable {
     
     var isDragSnappable: Bool {
         switch self {
-        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .specified, .reverseAll, .tileAll, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp,
+        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown, .specified, .reverseAll, .tileAll, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp,
             // Ninths
             .topLeftNinth, .topCenterNinth, .topRightNinth, .middleLeftNinth, .middleCenterNinth, .middleRightNinth, .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth,
             // Corner thirds
@@ -690,6 +711,13 @@ enum WindowAction: Int, Codable {
         case .topLeft: return Shortcut( ctrl|cmd, kVK_LeftArrow )
         case .topRight: return Shortcut( ctrl|cmd, kVK_RightArrow )
         case .restore: return Shortcut( ctrl|alt, kVK_Delete)
+        // Grid keyboard nav (M7). Control+Command+arrow (BentoBox's move bindings) is
+        // already taken by topLeft/topRight (ctrl|cmd + Left/Right), so use the
+        // collision-free Command+Option+Shift+arrow in both default sets.
+        case .gridMoveLeft: return Shortcut( cmd|alt|shift, kVK_LeftArrow )
+        case .gridMoveRight: return Shortcut( cmd|alt|shift, kVK_RightArrow )
+        case .gridMoveUp: return Shortcut( cmd|alt|shift, kVK_UpArrow )
+        case .gridMoveDown: return Shortcut( cmd|alt|shift, kVK_DownArrow )
         default: return nil
         }
     }
@@ -724,6 +752,10 @@ enum WindowAction: Int, Codable {
                 return Shortcut( ctrl|alt, kVK_ANSI_R )
             }
             return nil
+        case .gridMoveLeft: return Shortcut( cmd|alt|shift, kVK_LeftArrow )
+        case .gridMoveRight: return Shortcut( cmd|alt|shift, kVK_RightArrow )
+        case .gridMoveUp: return Shortcut( cmd|alt|shift, kVK_UpArrow )
+        case .gridMoveDown: return Shortcut( cmd|alt|shift, kVK_DownArrow )
         default: return nil
         }
     }
@@ -848,6 +880,10 @@ enum WindowAction: Int, Codable {
         case .displayOne, .displayTwo, .displayThree, .displayFour, .displayFive,
              .displaySix, .displaySeven, .displayEight, .displayNine:
             return NSImage(imageLiteralResourceName: "nextDisplayTemplate")
+        case .gridMoveLeft: return NSImage(imageLiteralResourceName: "moveLeftTemplate")
+        case .gridMoveRight: return NSImage(imageLiteralResourceName: "moveRightTemplate")
+        case .gridMoveUp: return NSImage(imageLiteralResourceName: "moveUpTemplate")
+        case .gridMoveDown: return NSImage(imageLiteralResourceName: "moveDownTemplate")
         }
     }
 
@@ -900,7 +936,10 @@ enum WindowAction: Int, Codable {
             return Defaults.applyGapsToMaximizeHeight.userDisabled ? .none : .vertical;
         case .almostMaximize, .previousDisplay, .nextDisplay, .larger, .smaller, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight, .center, .centerProminently, .restore, .specified, .reverseAll, .tileAll, .cascadeAll, .cascadeActiveApp, .tileActiveApp,
              .displayOne, .displayTwo, .displayThree, .displayFour, .displayFive,
-             .displaySix, .displaySeven, .displayEight, .displayNine:
+             .displaySix, .displaySeven, .displayEight, .displayNine,
+             // Grid keyboard nav: intercepted before WindowManager.execute, so gaps are
+             // applied by GridLayoutManager (zoneRectWithGaps), not this path.
+             .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown:
             return .none
         }
     }
@@ -914,7 +953,7 @@ enum WindowAction: Int, Codable {
         case .topLeftNinth, .topCenterNinth, .topRightNinth, .middleLeftNinth, .middleCenterNinth, .middleRightNinth, .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth: return .ninths
         case .topLeftTwelfth, .topCenterLeftTwelfth, .topCenterRightTwelfth, .topRightTwelfth, .middleLeftTwelfth, .middleCenterLeftTwelfth, .middleCenterRightTwelfth, .middleRightTwelfth, .bottomLeftTwelfth, .bottomCenterLeftTwelfth, .bottomCenterRightTwelfth, .bottomRightTwelfth: return .twelfths
         case .topLeftSixteenth, .topCenterLeftSixteenth, .topCenterRightSixteenth, .topRightSixteenth, .upperMiddleLeftSixteenth, .upperMiddleCenterLeftSixteenth, .upperMiddleCenterRightSixteenth, .upperMiddleRightSixteenth, .lowerMiddleLeftSixteenth, .lowerMiddleCenterLeftSixteenth, .lowerMiddleCenterRightSixteenth, .lowerMiddleRightSixteenth, .bottomLeftSixteenth, .bottomCenterLeftSixteenth, .bottomCenterRightSixteenth, .bottomRightSixteenth: return .sixteenths
-        case .moveUp, .moveDown, .moveLeft, .moveRight: return .move
+        case .moveUp, .moveDown, .moveLeft, .moveRight, .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown: return .move
         case .almostMaximize, .maximizeHeight, .larger, .smaller, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight: return .size
         default: return nil
         }

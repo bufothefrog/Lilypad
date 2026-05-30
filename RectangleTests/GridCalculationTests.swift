@@ -409,6 +409,111 @@ class GridCalculationTests: XCTestCase {
         assertRect(union, selection, file: file, line: line)
     }
 
+    // MARK: - targetZone (M7 keyboard nav)
+
+    /// An ALIGNED window (its rect matches a zone) moves to that zone's neighbor.
+    func testTargetZoneAlignedWindowMovesToNeighbor() {
+        let layout = uniform3x2()
+        // ids:  row 0: 0 1 2 ; row 1: 3 4 5.
+        // Window exactly fills the center-top zone (1); right -> 2, left -> 0, down -> 4.
+        let rect = GridCalculation.zoneRect(layout: layout, zoneId: 1, in: area)
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: rect, in: area, layout: layout, direction: .right), 2)
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: rect, in: area, layout: layout, direction: .left), 0)
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: rect, in: area, layout: layout, direction: .down), 4)
+        // The top-center zone has no neighbor above (top row) -> nil.
+        XCTAssertNil(GridCalculation.targetZone(forWindowRect: rect, in: area, layout: layout, direction: .up))
+    }
+
+    /// An aligned window within tolerance (slightly nudged) is still treated as
+    /// occupying its zone and hops to the neighbor.
+    func testTargetZoneAlignedWithinToleranceMovesToNeighbor() {
+        let layout = uniform3x2()
+        var rect = GridCalculation.zoneRect(layout: layout, zoneId: 0, in: area)
+        rect = rect.insetBy(dx: 8, dy: 6).offsetBy(dx: 4, dy: -5) // within default tolerance 25
+        // Zone 0 (top-left): right -> 1, down -> 3.
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: rect, in: area, layout: layout, direction: .right), 1)
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: rect, in: area, layout: layout, direction: .down), 3)
+    }
+
+    /// An aligned window at each wall in the wall direction returns nil (no neighbor).
+    func testTargetZoneAlignedAtEachWallIsNil() {
+        let layout = uniform3x2()
+        // ids:  row 0: 0 1 2 ; row 1: 3 4 5.
+        let topLeft = GridCalculation.zoneRect(layout: layout, zoneId: 0, in: area)    // top-left corner
+        let topRight = GridCalculation.zoneRect(layout: layout, zoneId: 2, in: area)   // top-right corner
+        let bottomLeft = GridCalculation.zoneRect(layout: layout, zoneId: 3, in: area) // bottom-left corner
+
+        // Left wall (zone 0): left -> nil. Top wall (zone 0): up -> nil.
+        XCTAssertNil(GridCalculation.targetZone(forWindowRect: topLeft, in: area, layout: layout, direction: .left))
+        XCTAssertNil(GridCalculation.targetZone(forWindowRect: topLeft, in: area, layout: layout, direction: .up))
+        // Right wall (zone 2): right -> nil.
+        XCTAssertNil(GridCalculation.targetZone(forWindowRect: topRight, in: area, layout: layout, direction: .right))
+        // Bottom wall (zone 3): down -> nil.
+        XCTAssertNil(GridCalculation.targetZone(forWindowRect: bottomLeft, in: area, layout: layout, direction: .down))
+    }
+
+    /// An UNALIGNED (free) window captures into the zone under its center and moves
+    /// toward the arrow: the first press both snaps into the grid AND nudges.
+    func testTargetZoneUnalignedWindowMovesFromCenterZone() {
+        let layout = uniform3x2()
+        // A small free window whose CENTER sits in the bottom-center cell (zone 4),
+        // but which fills no zone (so zone(matchingWindowRect:) returns nil).
+        let cell4 = GridCalculation.cellRect(layout: layout, col: 1, row: 1, in: area)
+        let center = CGPoint(x: cell4.midX, y: cell4.midY)
+        let freeRect = CGRect(x: center.x - 40, y: center.y - 30, width: 80, height: 60)
+        // Sanity: this rect must NOT match any zone (otherwise we'd be in the aligned case).
+        XCTAssertNil(GridCalculation.zone(matchingWindowRect: freeRect, in: area, layout: layout))
+
+        // Anchor zone is 4 (bottom center). right -> 5, left -> 3, up -> 1.
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .right), 5)
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .left), 3)
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .up), 1)
+    }
+
+    /// An unaligned window whose center is in an edge zone, moving toward the wall,
+    /// captures into that center zone (neighbor is nil -> fall back to the anchor).
+    func testTargetZoneUnalignedAtWallCapturesToCenterZone() {
+        let layout = uniform3x2()
+        // Free window centered in the top-left cell (zone 0), filling no zone.
+        let cell0 = GridCalculation.cellRect(layout: layout, col: 0, row: 0, in: area)
+        let center = CGPoint(x: cell0.midX, y: cell0.midY)
+        let freeRect = CGRect(x: center.x - 30, y: center.y - 20, width: 60, height: 40)
+        XCTAssertNil(GridCalculation.zone(matchingWindowRect: freeRect, in: area, layout: layout))
+
+        // Toward the left wall: no neighbor -> capture into the anchor zone 0.
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .left), 0)
+        // Toward the top wall: no neighbor -> capture into the anchor zone 0.
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .up), 0)
+        // But a non-wall direction still nudges: right -> 1, down -> 3.
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .right), 1)
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .down), 3)
+    }
+
+    /// An unaligned window whose center is OUTSIDE the area has no anchor zone -> nil.
+    func testTargetZoneUnalignedOutsideAreaIsNil() {
+        let layout = uniform3x2()
+        // A window entirely to the left of the area (center outside).
+        let freeRect = CGRect(x: area.minX - 300, y: area.midY - 50, width: 100, height: 100)
+        XCTAssertNil(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .right))
+    }
+
+    /// An unaligned window over a merged zone anchors on (and hops across) the merge.
+    func testTargetZoneUnalignedOverMergedZone() {
+        let layout = mergedTop()
+        // ids:  row 0: 9 9 1 ; row 1: 2 3 4. Free window centered in the LEFT cell of
+        // the wide merged zone 9 (col 0, row 0), filling no zone.
+        let cell = GridCalculation.cellRect(layout: layout, col: 0, row: 0, in: area)
+        let center = CGPoint(x: cell.midX, y: cell.midY)
+        let freeRect = CGRect(x: center.x - 25, y: center.y - 20, width: 50, height: 40)
+        XCTAssertNil(GridCalculation.zone(matchingWindowRect: freeRect, in: area, layout: layout))
+        // Anchor is the merged zone 9. right hops across the whole merge -> zone 1.
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .right), 1)
+        // down from the merged zone -> first differing cell of row 1 -> zone 2.
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .down), 2)
+        // left is a wall -> capture into the anchor (zone 9).
+        XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .left), 9)
+    }
+
     // MARK: - Gap-aware convenience
 
     func testZoneRectWithGapsInsetsTheRect() {

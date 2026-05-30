@@ -80,7 +80,11 @@ class ShortcutManager {
         if TodoManager.execute(parameters: parameters) {
             return
         }
-        
+
+        if GridLayoutManager.execute(parameters: parameters) {
+            return
+        }
+
         // Check if repeat cycles displays
         if Defaults.subsequentExecutionMode.value == .cycleMonitor,
            parameters.action.classification != .size,

@@ -1,0 +1,150 @@
+//
+//  GridLayoutManager.swift
+//  Rectangle / Lilypad
+//
+//  M7 — keyboard navigation across the active grid. A static `execute(parameters:)`
+//  interceptor (mirroring `MultiWindowManager.execute` / `TodoManager.execute`) that
+//  the `ShortcutManager.windowActionTriggered` early-return chain calls before
+//  `WindowManager.execute`. For a `gridMove*` action it infers the focused window's
+//  current zone on its monitor's active layout and moves it one zone in the arrow
+//  direction; for anything else it returns false untouched.
+//
+//  This path is purely additive: the new shortcuts don't override existing behavior,
+//  so unlike the drag path it is NOT gated by `Defaults.gridModeEnabled`.
+//
+//  COORDINATE SPACE: the window frame from AccessibilityElement is top-left (AX)
+//  space. `GridCalculation` works in Cocoa bottom-left within the screen's
+//  `adjustedVisibleFrame`. We convert the window rect with `.screenFlipped` BEFORE
+//  inferring its zone, and commit the resulting zone rect through
+//  `WindowManager.applyGridRect`, which re-applies `.screenFlipped` on commit (the
+//  same flip WindowManager.execute uses), reusing the mover chains + recordAction
+//  history (for repeat/last-action detection). Restore-to-original is preserved by
+//  seeding `restoreRects` with the pre-move AX frame before committing, mirroring the
+//  M5/M6 drag commit paths (`applyGridRect`/`recordAction` themselves never touch
+//  `restoreRects`).
+//
+
+import Cocoa
+
+class GridLayoutManager {
+
+    /// Intercept a `gridMove*` action and move the focused window one zone in the
+    /// arrow direction along its monitor's active grid layout.
+    ///
+    /// Returns `false` immediately for any non-grid action (so it is untouched and
+    /// flows on to the rest of the `windowActionTriggered` chain). For a grid action
+    /// it ALWAYS returns `true` (consuming it) — even on failure (no window / no
+    /// screen / no layout / wall), where it beeps — so `WindowManager.execute` is
+    /// never reached for a grid action (it has no `calculationsByAction` entry and
+    /// would beep on the missing action).
+    static func execute(parameters: ExecutionParameters) -> Bool {
+        guard let direction = direction(for: parameters.action) else {
+            return false
+        }
+
+        // Resolve the target window: the carried element (e.g. from a drag/title-bar
+        // source) or the current front window.
+        guard let windowElement = parameters.windowElement ?? AccessibilityElement.getFrontWindowElement(),
+              let windowId = parameters.windowId ?? windowElement.getWindowId()
+        else {
+            NSSound.beep()
+            Logger.log("Grid move: no front window")
+            return true
+        }
+
+        // Resolve the window's screen. Front-window screen detection is the natural
+        // default for keyboard nav (the window, not the cursor, is what moves), but
+        // honor the global cursor-screen preference so behavior matches the rest of
+        // the app when the user has opted into it.
+        let screenDetection = ScreenDetection()
+        let usableScreens = Defaults.useCursorScreenDetection.enabled
+            ? screenDetection.detectScreensAtCursor()
+            : screenDetection.detectScreens(using: windowElement)
+        guard let screen = usableScreens?.currentScreen,
+              let displayUUID = screen.displayUUIDString
+        else {
+            NSSound.beep()
+            Logger.log("Grid move: no usable screen / display UUID")
+            return true
+        }
+
+        // The active layout for this monitor, seeding the starter set on first use.
+        guard let layout = GridModel.instance.ensureActiveLayout(forDisplay: displayUUID) else {
+            NSSound.beep()
+            Logger.log("Grid move: no active layout for display \(displayUUID)")
+            return true
+        }
+
+        let ignoreTodo = TodoManager.isTodoWindow(windowId)
+        let area = screen.adjustedVisibleFrame(ignoreTodo)
+        guard !area.isNull else {
+            NSSound.beep()
+            Logger.log("Grid move: invalid screen area")
+            return true
+        }
+
+        // AX top-left frame -> Cocoa bottom-left, the space GridCalculation works in.
+        let windowRect = windowElement.frame
+        guard !windowRect.isNull else {
+            NSSound.beep()
+            Logger.log("Grid move: invalid window frame")
+            return true
+        }
+        let cocoaWindowRect = windowRect.screenFlipped
+
+        guard let targetZone = GridCalculation.targetZone(forWindowRect: cocoaWindowRect, in: area, layout: layout, direction: direction) else {
+            // Aligned window already at the wall in this direction (no neighbor). M8
+            // will replace this with the configurable per-edge wall action.
+            NSSound.beep()
+            return true
+        }
+
+        // The zone's Cocoa-space rect, gap-inset when gaps are enabled.
+        let gapSize = Defaults.gapSize.value
+        let zoneRect = gapSize > 0
+            ? GridCalculation.zoneRectWithGaps(layout: layout, zoneId: targetZone, in: area, gapSize: gapSize)
+            : GridCalculation.zoneRect(layout: layout, zoneId: targetZone, in: area)
+        guard !zoneRect.isNull else {
+            NSSound.beep()
+            Logger.log("Grid move: null zone rect for zone \(targetZone)")
+            return true
+        }
+
+        // Commit through the M5 rect-carrying path (mover chains + recordAction, which
+        // records lastRectangleActions for repeat/last-action detection). applyGridRect
+        // re-applies the .screenFlipped on commit.
+        guard let windowManager = WindowManager.instance else {
+            NSSound.beep()
+            Logger.log("Grid move: no WindowManager instance")
+            return true
+        }
+
+        // Seed the pre-move restore rect so `restore` (ctrl+alt+Delete) can bring the
+        // window back to where it was before this grid move. applyGridRect/recordAction
+        // only write lastRectangleActions, NOT restoreRects, and .restore reads ONLY
+        // restoreRects — so without this a grid move on a free/never-snapped window
+        // would leave restoreRects[windowId] == nil and Restore would be a no-op. This
+        // mirrors the M5/M6 drag commits (commitGridSnap/commitGridSpanSnap). Use the
+        // AX/top-left frame (windowRect), captured before the move — the same value
+        // WindowManager.execute stores as currentWindowRect, NOT the screenFlipped rect.
+        if Defaults.unsnapRestore.enabled != false,
+           AppDelegate.windowHistory.restoreRects[windowId] == nil {
+            AppDelegate.windowHistory.restoreRects[windowId] = windowRect
+        }
+
+        windowManager.applyGridRect(zoneRect, screen: screen, windowElement: windowElement, windowId: windowId)
+        return true
+    }
+
+    /// The `GridCalculation.Direction` for a grid-move action, or `nil` if `action`
+    /// is not a grid-move action (so `execute` returns false untouched).
+    private static func direction(for action: WindowAction) -> GridCalculation.Direction? {
+        switch action {
+        case .gridMoveLeft: return .left
+        case .gridMoveRight: return .right
+        case .gridMoveUp: return .up
+        case .gridMoveDown: return .down
+        default: return nil
+        }
+    }
+}
