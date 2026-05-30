@@ -182,4 +182,17 @@ class GridModelTests: XCTestCase {
         // uuidB got the starter set.
         XCTAssertEqual(model.layouts(forDisplay: uuidB).layouts.count, 2)
     }
+
+    func testEnsureActiveLayoutSeedsWhenEmptyThenReturnsExisting() {
+        // First call on an unseeded display lazily seeds it and returns the active layout.
+        let first = model.ensureActiveLayout(forDisplay: uuidA)
+        XCTAssertNotNil(first)
+        XCTAssertEqual(model.layouts(forDisplay: uuidA).layouts.count, 2)
+        XCTAssertEqual(model.layouts(forDisplay: uuidA).activeLayoutId, first?.id)
+
+        // Second call returns the same active layout without re-seeding (no duplicate layouts).
+        let second = model.ensureActiveLayout(forDisplay: uuidA)
+        XCTAssertEqual(second?.id, first?.id)
+        XCTAssertEqual(model.layouts(forDisplay: uuidA).layouts.count, 2)
+    }
 }

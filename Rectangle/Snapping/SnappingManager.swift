@@ -449,9 +449,9 @@ class SnappingManager {
     private func updateGridPreview(windowId: CGWindowID, currentRect: CGRect) {
         guard let screen = screenDetection.detectScreensAtCursor()?.currentScreen,
               let uuid = screen.displayUUIDString,
-              let layout = GridModel.instance.activeLayout(forDisplay: uuid)
+              let layout = GridModel.instance.ensureActiveLayout(forDisplay: uuid)
         else {
-            // No layout for this display: nothing to preview.
+            // No layout for this display (and seeding produced none): nothing to preview.
             clearGridPreview()
             return
         }

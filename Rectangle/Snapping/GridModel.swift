@@ -33,6 +33,21 @@ class GridModel {
         layouts(forDisplay: displayUUID).activeLayout
     }
 
+    /// The active layout for `displayUUID`, seeding the display with the default
+    /// starter set on first use if it has no layouts yet. This is the on-demand
+    /// seeding the runtime grid path relies on: the one-shot launch migration can
+    /// miss displays that aren't named/connected yet at launch (and never re-runs
+    /// once lastVersion advances), so the drag/chord/keyboard paths seed lazily
+    /// instead. Seeds at most once per display (subsequent calls return the active
+    /// layout directly, so there is no per-frame write).
+    func ensureActiveLayout(forDisplay displayUUID: String) -> ZoneLayout? {
+        if let layout = activeLayout(forDisplay: displayUUID) {
+            return layout
+        }
+        seedDefaultLayouts(forDisplays: [displayUUID])
+        return activeLayout(forDisplay: displayUUID)
+    }
+
     // MARK: - Mutations (copy-mutate-writeback)
 
     /// Appends `layout` to `displayUUID`'s layouts. If the display had no
