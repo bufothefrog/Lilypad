@@ -711,13 +711,13 @@ enum WindowAction: Int, Codable {
         case .topLeft: return Shortcut( ctrl|cmd, kVK_LeftArrow )
         case .topRight: return Shortcut( ctrl|cmd, kVK_RightArrow )
         case .restore: return Shortcut( ctrl|alt, kVK_Delete)
-        // Grid keyboard nav (M7). Control+Command+arrow (BentoBox's move bindings) is
-        // already taken by topLeft/topRight (ctrl|cmd + Left/Right), so use the
-        // collision-free Command+Option+Shift+arrow in both default sets.
-        case .gridMoveLeft: return Shortcut( cmd|alt|shift, kVK_LeftArrow )
-        case .gridMoveRight: return Shortcut( cmd|alt|shift, kVK_RightArrow )
-        case .gridMoveUp: return Shortcut( cmd|alt|shift, kVK_UpArrow )
-        case .gridMoveDown: return Shortcut( cmd|alt|shift, kVK_DownArrow )
+        // Grid keyboard nav (M7). Command+Shift+arrow (user preference). NOTE: these are
+        // the system text-selection shortcuts, so as a global hotkey they override
+        // select-to-line/document in editors; rebindable in the M14 settings UI.
+        case .gridMoveLeft: return Shortcut( cmd|shift, kVK_LeftArrow )
+        case .gridMoveRight: return Shortcut( cmd|shift, kVK_RightArrow )
+        case .gridMoveUp: return Shortcut( cmd|shift, kVK_UpArrow )
+        case .gridMoveDown: return Shortcut( cmd|shift, kVK_DownArrow )
         default: return nil
         }
     }
@@ -752,10 +752,10 @@ enum WindowAction: Int, Codable {
                 return Shortcut( ctrl|alt, kVK_ANSI_R )
             }
             return nil
-        case .gridMoveLeft: return Shortcut( cmd|alt|shift, kVK_LeftArrow )
-        case .gridMoveRight: return Shortcut( cmd|alt|shift, kVK_RightArrow )
-        case .gridMoveUp: return Shortcut( cmd|alt|shift, kVK_UpArrow )
-        case .gridMoveDown: return Shortcut( cmd|alt|shift, kVK_DownArrow )
+        case .gridMoveLeft: return Shortcut( cmd|shift, kVK_LeftArrow )
+        case .gridMoveRight: return Shortcut( cmd|shift, kVK_RightArrow )
+        case .gridMoveUp: return Shortcut( cmd|shift, kVK_UpArrow )
+        case .gridMoveDown: return Shortcut( cmd|shift, kVK_DownArrow )
         default: return nil
         }
     }
