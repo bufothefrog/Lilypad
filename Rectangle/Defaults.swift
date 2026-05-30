@@ -532,9 +532,14 @@ struct CodableColor : Codable {
     }
 
     init(nsColor: NSColor) {
-        self.red = nsColor.redComponent
-        self.green = nsColor.greenComponent
-        self.blue = nsColor.blueComponent
-        self.alpha = nsColor.alphaComponent
+        // The color panel / SwiftUI ColorPicker can produce a color in a
+        // grayscale, named-catalog, or pattern colorspace; reading
+        // `.redComponent` etc. directly on such a color raises an NSException.
+        // Convert to sRGB (an RGB colorspace) first so component access is valid.
+        let rgbColor = nsColor.usingColorSpace(.sRGB) ?? nsColor
+        self.red = rgbColor.redComponent
+        self.green = rgbColor.greenComponent
+        self.blue = rgbColor.blueComponent
+        self.alpha = rgbColor.alphaComponent
     }
 }
