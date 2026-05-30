@@ -152,12 +152,13 @@ class GridOverlayWindow: NSWindow {
     }
 }
 
-/// The content view that strokes each zone rect and fills a highlighted zone.
+/// The content view that draws each zone as a footprint-style rounded tile.
 ///
 /// Intentionally NON-FLIPPED (`isFlipped == false`) so its local y grows upward,
-/// matching the Cocoa bottom-left rects produced by `overlayZoneFrames`. Reuses
-/// the footprint theming defaults (`footprintColor` / `footprintAlpha` /
-/// `footprintBorderWidth`) for visual consistency with the drag preview.
+/// matching the Cocoa bottom-left rects produced by `overlayZoneFrames`. Each zone
+/// is painted like Rectangle's drag footprint — an opaque `footprintColor` fill
+/// with a light-gray rounded border — while the window's `footprintAlpha` supplies
+/// the translucency. The highlighted zone is accented so the snap target stands out.
 private class GridOverlayView: NSView {
 
     private var zoneFrames: [Int: CGRect] = [:]
@@ -172,27 +173,39 @@ private class GridOverlayView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // Theming mirrors FootprintWindow for visual consistency.
-        let baseColor = Defaults.footprintColor.typedValue?.nsColor ?? NSColor.black
+        // Each zone is drawn like Rectangle's drag footprint: an OPAQUE
+        // footprintColor fill with a light-gray rounded border. The window's
+        // alphaValue (footprintAlpha) supplies the translucency, exactly as
+        // FootprintWindow does — so we do not pre-multiply alpha into the colors.
+        let footprintColor = Defaults.footprintColor.typedValue?.nsColor ?? NSColor.black
         let borderWidth = CGFloat(Defaults.footprintBorderWidth.value)
-        let fillAlpha = CGFloat(Defaults.footprintAlpha.value)
+        let radius = GridOverlayView.cornerRadius
+        // A small gap so adjacent zones read as separate rounded footprints rather
+        // than one continuous fill.
+        let gap = max(borderWidth, 4)
 
-        let strokeColor = baseColor.withAlphaComponent(min(1, fillAlpha + 0.4))
-        let fillColor = baseColor.withAlphaComponent(fillAlpha)
+        // No geometry is computed here — rects come from the unit-tested
+        // `overlayZoneFrames`; draw(_:) only paints.
+        for (zoneId, rect) in zoneFrames {
+            let tile = rect.insetBy(dx: gap, dy: gap)
+            guard tile.width > 0, tile.height > 0 else { continue }
+            let path = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
 
-        // Draw the highlight fill first so its border is not painted over.
-        if let highlightZone = highlightZone, let rect = zoneFrames[highlightZone] {
-            fillColor.setFill()
-            rect.insetBy(dx: borderWidth / 2, dy: borderWidth / 2).fill()
-        }
+            // The highlighted zone uses the accent color so the snap target pops;
+            // every other zone gets the standard footprint fill.
+            (zoneId == highlightZone ? NSColor.controlAccentColor : footprintColor).setFill()
+            path.fill()
 
-        // No geometry is computed here — all rects come straight from the
-        // unit-tested `overlayZoneFrames`. draw(_:) only paints.
-        strokeColor.setStroke()
-        for (_, rect) in zoneFrames {
-            let path = NSBezierPath(rect: rect.insetBy(dx: borderWidth / 2, dy: borderWidth / 2))
+            NSColor.lightGray.setStroke()
             path.lineWidth = borderWidth
             path.stroke()
         }
+    }
+
+    /// Footprint corner radius, matching FootprintWindow across macOS versions.
+    private static var cornerRadius: CGFloat {
+        if #available(macOS 26.0, *) { return 16 }
+        if #available(macOS 11.0, *) { return 10 }
+        return 5
     }
 }
