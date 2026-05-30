@@ -514,6 +514,201 @@ class GridCalculationTests: XCTestCase {
         XCTAssertEqual(GridCalculation.targetZone(forWindowRect: freeRect, in: area, layout: layout, direction: .left), 9)
     }
 
+    // MARK: - Cell range inference (M8a span)
+
+    /// A window filling a single zone infers the 1×1 cell range of that zone.
+    func testCellRangeSingleZone() {
+        let layout = uniform3x2()
+        // Zone 1 = (col 1, row 0).
+        let rect = GridCalculation.zoneRect(layout: layout, zoneId: 1, in: area)
+        let range = GridCalculation.cellRange(matchingWindowRect: rect, in: area, layout: layout)
+        XCTAssertEqual(range, GridCalculation.CellRange(colMin: 1, colMax: 1, rowMin: 0, rowMax: 0))
+    }
+
+    /// A window already spanning a 2×2 block infers that multi-cell range, not a
+    /// single cell. Built directly from the range's bounding rect.
+    func testCellRangeMultiCellSpan() {
+        let layout = uniform3x2()
+        // Cols 0-1, rows 0-1 (the left 2×2 block of the 3×2 grid).
+        let block = GridCalculation.CellRange(colMin: 0, colMax: 1, rowMin: 0, rowMax: 1)
+        let rect = GridCalculation.rangeRect(block, in: area, layout: layout)
+        let inferred = GridCalculation.cellRange(matchingWindowRect: rect, in: area, layout: layout)
+        XCTAssertEqual(inferred, block)
+    }
+
+    /// A window within tolerance of a single cell still infers that 1×1 range, and
+    /// is NOT widened into a larger range whose edges also happen to be near.
+    func testCellRangeWithinToleranceStaysSingleCell() {
+        let layout = uniform3x2()
+        var rect = GridCalculation.zoneRect(layout: layout, zoneId: 4, in: area) // (col1,row1)
+        rect = rect.insetBy(dx: 8, dy: 6).offsetBy(dx: 4, dy: -5) // within default tolerance 25
+        let range = GridCalculation.cellRange(matchingWindowRect: rect, in: area, layout: layout)
+        XCTAssertEqual(range, GridCalculation.CellRange(colMin: 1, colMax: 1, rowMin: 1, rowMax: 1))
+    }
+
+    /// A free/unaligned window (matching no range) falls back to the single cell
+    /// under its CENTER — and the center cell respects the row=top convention.
+    func testCellRangeFreeWindowFallsBackToCenterCell() {
+        let layout = uniform3x2()
+        // Center sits in the bottom-center cell => (col 1, row 1).
+        let cell = GridCalculation.cellRect(layout: layout, col: 1, row: 1, in: area)
+        let center = CGPoint(x: cell.midX, y: cell.midY)
+        let freeRect = CGRect(x: center.x - 40, y: center.y - 30, width: 80, height: 60)
+        XCTAssertNil(GridCalculation.zone(matchingWindowRect: freeRect, in: area, layout: layout))
+        let range = GridCalculation.cellRange(matchingWindowRect: freeRect, in: area, layout: layout)
+        XCTAssertEqual(range, GridCalculation.CellRange(colMin: 1, colMax: 1, rowMin: 1, rowMax: 1))
+    }
+
+    /// A free window centered in the TOP-left cell maps to row 0 (anti-mirroring:
+    /// the top of the screen is the largest y but the smallest row index).
+    func testCellRangeFreeWindowTopCellIsRow0() {
+        let layout = uniform3x2()
+        let cell = GridCalculation.cellRect(layout: layout, col: 0, row: 0, in: area)
+        let center = CGPoint(x: cell.midX, y: cell.midY)
+        let freeRect = CGRect(x: center.x - 20, y: center.y - 15, width: 40, height: 30)
+        XCTAssertNil(GridCalculation.zone(matchingWindowRect: freeRect, in: area, layout: layout))
+        let range = GridCalculation.cellRange(matchingWindowRect: freeRect, in: area, layout: layout)
+        XCTAssertEqual(range, GridCalculation.CellRange(colMin: 0, colMax: 0, rowMin: 0, rowMax: 0))
+    }
+
+    /// A window whose center is OUTSIDE the area has no anchor cell -> nil.
+    func testCellRangeCenterOutsideAreaIsNil() {
+        let layout = uniform3x2()
+        let freeRect = CGRect(x: area.minX - 300, y: area.midY - 50, width: 100, height: 100)
+        XCTAssertNil(GridCalculation.cellRange(matchingWindowRect: freeRect, in: area, layout: layout))
+    }
+
+    // MARK: - grownRange (M8a span, grow-only, directional)
+
+    /// Growing in each direction adjusts the correct edge by one, with the row
+    /// convention honored: UP decrements rowMin (toward the top), DOWN increments
+    /// rowMax (toward the bottom). The starting range is the interior cell so every
+    /// direction has room to grow.
+    func testGrownRangeEachDirection() {
+        // 3 cols, 3 rows; start at the center cell (col1,row1).
+        let start = GridCalculation.CellRange(colMin: 1, colMax: 1, rowMin: 1, rowMax: 1)
+        XCTAssertEqual(GridCalculation.grownRange(start, direction: .left, cols: 3, rows: 3),
+                       GridCalculation.CellRange(colMin: 0, colMax: 1, rowMin: 1, rowMax: 1))
+        XCTAssertEqual(GridCalculation.grownRange(start, direction: .right, cols: 3, rows: 3),
+                       GridCalculation.CellRange(colMin: 1, colMax: 2, rowMin: 1, rowMax: 1))
+        // UP grows toward the TOP => smaller rowMin.
+        XCTAssertEqual(GridCalculation.grownRange(start, direction: .up, cols: 3, rows: 3),
+                       GridCalculation.CellRange(colMin: 1, colMax: 1, rowMin: 0, rowMax: 1))
+        // DOWN grows toward the BOTTOM => larger rowMax.
+        XCTAssertEqual(GridCalculation.grownRange(start, direction: .down, cols: 3, rows: 3),
+                       GridCalculation.CellRange(colMin: 1, colMax: 1, rowMin: 1, rowMax: 2))
+    }
+
+    /// At each wall, growing in the wall direction returns nil (grow-only no-op).
+    func testGrownRangeAtWallsIsNil() {
+        // Range pinned to the top-left corner cell of a 3×2 grid.
+        let topLeft = GridCalculation.CellRange(colMin: 0, colMax: 0, rowMin: 0, rowMax: 0)
+        XCTAssertNil(GridCalculation.grownRange(topLeft, direction: .left, cols: 3, rows: 2))
+        XCTAssertNil(GridCalculation.grownRange(topLeft, direction: .up, cols: 3, rows: 2))
+        // Range pinned to the bottom-right corner cell.
+        let bottomRight = GridCalculation.CellRange(colMin: 2, colMax: 2, rowMin: 1, rowMax: 1)
+        XCTAssertNil(GridCalculation.grownRange(bottomRight, direction: .right, cols: 3, rows: 2))
+        XCTAssertNil(GridCalculation.grownRange(bottomRight, direction: .down, cols: 3, rows: 2))
+    }
+
+    /// A range already spanning to a wall on one edge can still grow on the other
+    /// edges; only the edge AT the wall is blocked.
+    func testGrownRangeWideRangeGrowsRemainingEdges() {
+        // Full top row of a 3×2 grid (cols 0-2, row 0). Up is blocked (row 0), down OK.
+        let topRow = GridCalculation.CellRange(colMin: 0, colMax: 2, rowMin: 0, rowMax: 0)
+        XCTAssertNil(GridCalculation.grownRange(topRow, direction: .up, cols: 3, rows: 2))
+        XCTAssertNil(GridCalculation.grownRange(topRow, direction: .left, cols: 3, rows: 2))
+        XCTAssertNil(GridCalculation.grownRange(topRow, direction: .right, cols: 3, rows: 2))
+        XCTAssertEqual(GridCalculation.grownRange(topRow, direction: .down, cols: 3, rows: 2),
+                       GridCalculation.CellRange(colMin: 0, colMax: 2, rowMin: 0, rowMax: 1))
+    }
+
+    // MARK: - rangeRect
+
+    /// A single-cell range's rect equals that cell's rect (uniform layout).
+    func testRangeRectSingleCellUniform() {
+        let layout = uniform3x2()
+        let single = GridCalculation.CellRange(colMin: 2, colMax: 2, rowMin: 1, rowMax: 1)
+        assertRect(GridCalculation.rangeRect(single, in: area, layout: layout),
+                   GridCalculation.cellRect(layout: layout, col: 2, row: 1, in: area))
+    }
+
+    /// A multi-cell range's rect is the bounding union of its corner cells. For the
+    /// left 2×2 block of a 3×2 grid that's the left two-thirds, full height.
+    func testRangeRectMultiCellUniform() {
+        let layout = uniform3x2()
+        let block = GridCalculation.CellRange(colMin: 0, colMax: 1, rowMin: 0, rowMax: 1)
+        let rect = GridCalculation.rangeRect(block, in: area, layout: layout)
+        XCTAssertEqual(rect.minX, area.minX, accuracy: eps)
+        XCTAssertEqual(rect.width, (2.0 / 3) * area.width, accuracy: eps)
+        XCTAssertEqual(rect.minY, area.minY, accuracy: eps)   // spans both rows => full height
+        XCTAssertEqual(rect.maxY, area.maxY, accuracy: eps)
+        XCTAssertEqual(rect.height, area.height, accuracy: eps)
+    }
+
+    /// rangeRect on a NON-uniform layout uses the actual boundary positions, not
+    /// assumed-uniform cell sizes. Columns split at 0.25, rows (from top) at 0.75.
+    func testRangeRectNonUniform() {
+        let layout = ZoneLayout(
+            id: "nu", name: "nu",
+            colBoundaries: [0, 0.25, 1],
+            rowBoundaries: [0, 0.75, 1],
+            cellZones: [0, 1,
+                        2, 3]
+        )
+        // Single top-left cell: narrow (0.25 wide) and tall (0.75), touching top.
+        let topLeft = GridCalculation.rangeRect(
+            GridCalculation.CellRange(colMin: 0, colMax: 0, rowMin: 0, rowMax: 0), in: area, layout: layout)
+        XCTAssertEqual(topLeft.width, 0.25 * area.width, accuracy: eps)
+        XCTAssertEqual(topLeft.height, 0.75 * area.height, accuracy: eps)
+        XCTAssertEqual(topLeft.maxY, area.maxY, accuracy: eps)
+
+        // Full first column (rows 0-1): still 0.25 wide, but now full height.
+        let leftCol = GridCalculation.rangeRect(
+            GridCalculation.CellRange(colMin: 0, colMax: 0, rowMin: 0, rowMax: 1), in: area, layout: layout)
+        XCTAssertEqual(leftCol.width, 0.25 * area.width, accuracy: eps)
+        XCTAssertEqual(leftCol.height, area.height, accuracy: eps)
+        XCTAssertEqual(leftCol.minX, area.minX, accuracy: eps)
+    }
+
+    /// Anti-mirroring through rangeRect: growing UP from a bottom-row cell must
+    /// extend the rect's TOP edge upward (toward larger y), and growing DOWN from a
+    /// top-row cell must extend the BOTTOM edge downward (toward smaller y).
+    func testRangeRectUpDownMapToTopBottom() {
+        let layout = uniform3x2()
+        // Start: bottom-left cell (col0,row1). Grow UP -> covers rows 0-1, col 0.
+        let bottom = GridCalculation.CellRange(colMin: 0, colMax: 0, rowMin: 1, rowMax: 1)
+        let grownUp = GridCalculation.grownRange(bottom, direction: .up, cols: 3, rows: 2)!
+        let upRect = GridCalculation.rangeRect(grownUp, in: area, layout: layout)
+        let bottomRect = GridCalculation.rangeRect(bottom, in: area, layout: layout)
+        // Growing up keeps the bottom edge, raises the top edge to the screen top.
+        XCTAssertEqual(upRect.minY, bottomRect.minY, accuracy: eps)
+        XCTAssertEqual(upRect.maxY, area.maxY, accuracy: eps)
+        XCTAssertGreaterThan(upRect.maxY, bottomRect.maxY)
+
+        // Start: top-left cell (col0,row0). Grow DOWN -> covers rows 0-1, col 0.
+        let top = GridCalculation.CellRange(colMin: 0, colMax: 0, rowMin: 0, rowMax: 0)
+        let grownDown = GridCalculation.grownRange(top, direction: .down, cols: 3, rows: 2)!
+        let downRect = GridCalculation.rangeRect(grownDown, in: area, layout: layout)
+        let topRect = GridCalculation.rangeRect(top, in: area, layout: layout)
+        // Growing down keeps the top edge, lowers the bottom edge to the screen bottom.
+        XCTAssertEqual(downRect.maxY, topRect.maxY, accuracy: eps)
+        XCTAssertEqual(downRect.minY, area.minY, accuracy: eps)
+        XCTAssertLessThan(downRect.minY, topRect.minY)
+    }
+
+    /// rangeRectWithGaps insets the bounding rect like zoneRectWithGaps; gapSize 0
+    /// is a no-op.
+    func testRangeRectWithGaps() {
+        let layout = uniform3x2()
+        let range = GridCalculation.CellRange(colMin: 0, colMax: 1, rowMin: 0, rowMax: 0)
+        let plain = GridCalculation.rangeRect(range, in: area, layout: layout)
+        let gapped = GridCalculation.rangeRectWithGaps(range, in: area, layout: layout, gapSize: 10)
+        XCTAssertLessThan(gapped.width, plain.width)
+        XCTAssertLessThan(gapped.height, plain.height)
+        assertRect(GridCalculation.rangeRectWithGaps(range, in: area, layout: layout, gapSize: 0), plain)
+    }
+
     // MARK: - Gap-aware convenience
 
     func testZoneRectWithGapsInsetsTheRect() {

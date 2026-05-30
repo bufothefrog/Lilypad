@@ -145,7 +145,11 @@ enum WindowAction: Int, Codable {
          gridMoveLeft = 129,
          gridMoveRight = 130,
          gridMoveUp = 131,
-         gridMoveDown = 132
+         gridMoveDown = 132,
+         gridSpanLeft = 133,
+         gridSpanRight = 134,
+         gridSpanUp = 135,
+         gridSpanDown = 136
 
     // Order matters here - it's used in the menu
     static let active = [leftHalf, rightHalf, centerHalf, topHalf, bottomHalf,
@@ -157,6 +161,7 @@ enum WindowAction: Int, Codable {
                          nextDisplay, previousDisplay,
                          moveLeft, moveRight, moveUp, moveDown,
                          gridMoveLeft, gridMoveRight, gridMoveUp, gridMoveDown,
+                         gridSpanLeft, gridSpanRight, gridSpanUp, gridSpanDown,
                          firstFourth, secondFourth, thirdFourth, lastFourth, firstThreeFourths, centerThreeFourths, lastThreeFourths,
                          topLeftSixth, topCenterSixth, topRightSixth, bottomLeftSixth, bottomCenterSixth, bottomRightSixth,
                          specified, reverseAll,
@@ -343,6 +348,10 @@ enum WindowAction: Int, Codable {
         case .gridMoveRight: return "gridMoveRight"
         case .gridMoveUp: return "gridMoveUp"
         case .gridMoveDown: return "gridMoveDown"
+        case .gridSpanLeft: return "gridSpanLeft"
+        case .gridSpanRight: return "gridSpanRight"
+        case .gridSpanUp: return "gridSpanUp"
+        case .gridSpanDown: return "gridSpanDown"
         }
     }
 
@@ -649,6 +658,18 @@ enum WindowAction: Int, Codable {
         case .gridMoveDown:
             key = "gridMoveDown.title"
             value = "Grid Move Down"
+        case .gridSpanLeft:
+            key = "gridSpanLeft.title"
+            value = "Grid Span Left"
+        case .gridSpanRight:
+            key = "gridSpanRight.title"
+            value = "Grid Span Right"
+        case .gridSpanUp:
+            key = "gridSpanUp.title"
+            value = "Grid Span Up"
+        case .gridSpanDown:
+            key = "gridSpanDown.title"
+            value = "Grid Span Down"
         }
 
         return NSLocalizedString(key, tableName: "Main", value: value, comment: "")
@@ -679,7 +700,7 @@ enum WindowAction: Int, Codable {
     
     var isDragSnappable: Bool {
         switch self {
-        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown, .specified, .reverseAll, .tileAll, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp,
+        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown, .gridSpanLeft, .gridSpanRight, .gridSpanUp, .gridSpanDown, .specified, .reverseAll, .tileAll, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp,
             // Ninths
             .topLeftNinth, .topCenterNinth, .topRightNinth, .middleLeftNinth, .middleCenterNinth, .middleRightNinth, .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth,
             // Corner thirds
@@ -706,8 +727,12 @@ enum WindowAction: Int, Codable {
         case .bottomHalf: return Shortcut( cmd|alt, kVK_DownArrow )
         case .topHalf: return Shortcut( cmd|alt, kVK_UpArrow )
         case .center: return Shortcut( alt|cmd, kVK_ANSI_C )
-        case .bottomLeft: return Shortcut( cmd|ctrl|shift, kVK_LeftArrow )
-        case .bottomRight: return Shortcut( cmd|ctrl|shift, kVK_RightArrow )
+        // bottomLeft/bottomRight previously claimed cmd|ctrl|shift+Left/Right. Those
+        // chords are freed here (return nil) so the Lilypad grid SPAN actions
+        // (gridSpanLeft/Right, below) can use cmd|ctrl|shift+arrow as their default.
+        // The actions stay fully defined and remain rebindable in the settings UI.
+        case .bottomLeft: return nil
+        case .bottomRight: return nil
         case .topLeft: return Shortcut( ctrl|cmd, kVK_LeftArrow )
         case .topRight: return Shortcut( ctrl|cmd, kVK_RightArrow )
         case .restore: return Shortcut( ctrl|alt, kVK_Delete)
@@ -718,6 +743,14 @@ enum WindowAction: Int, Codable {
         case .gridMoveRight: return Shortcut( cmd|shift, kVK_RightArrow )
         case .gridMoveUp: return Shortcut( cmd|shift, kVK_UpArrow )
         case .gridMoveDown: return Shortcut( cmd|shift, kVK_DownArrow )
+        // Grid keyboard SPAN (M8a). Command+Control+Shift+arrow (user preference) —
+        // grows the focused window's grid footprint by one zone-line. The Left/Right
+        // chords were freed above by nil'ing bottomLeft/bottomRight; Up/Down were
+        // unused (maximizeHeight uses ctrl|alt|shift+Up, no cmd).
+        case .gridSpanLeft: return Shortcut( cmd|ctrl|shift, kVK_LeftArrow )
+        case .gridSpanRight: return Shortcut( cmd|ctrl|shift, kVK_RightArrow )
+        case .gridSpanUp: return Shortcut( cmd|ctrl|shift, kVK_UpArrow )
+        case .gridSpanDown: return Shortcut( cmd|ctrl|shift, kVK_DownArrow )
         default: return nil
         }
     }
@@ -756,6 +789,11 @@ enum WindowAction: Int, Codable {
         case .gridMoveRight: return Shortcut( cmd|shift, kVK_RightArrow )
         case .gridMoveUp: return Shortcut( cmd|shift, kVK_UpArrow )
         case .gridMoveDown: return Shortcut( cmd|shift, kVK_DownArrow )
+        // Grid keyboard SPAN (M8a): cmd|ctrl|shift+arrow in both default tables.
+        case .gridSpanLeft: return Shortcut( cmd|ctrl|shift, kVK_LeftArrow )
+        case .gridSpanRight: return Shortcut( cmd|ctrl|shift, kVK_RightArrow )
+        case .gridSpanUp: return Shortcut( cmd|ctrl|shift, kVK_UpArrow )
+        case .gridSpanDown: return Shortcut( cmd|ctrl|shift, kVK_DownArrow )
         default: return nil
         }
     }
@@ -884,6 +922,10 @@ enum WindowAction: Int, Codable {
         case .gridMoveRight: return NSImage(imageLiteralResourceName: "moveRightTemplate")
         case .gridMoveUp: return NSImage(imageLiteralResourceName: "moveUpTemplate")
         case .gridMoveDown: return NSImage(imageLiteralResourceName: "moveDownTemplate")
+        case .gridSpanLeft: return NSImage(imageLiteralResourceName: "moveLeftTemplate")
+        case .gridSpanRight: return NSImage(imageLiteralResourceName: "moveRightTemplate")
+        case .gridSpanUp: return NSImage(imageLiteralResourceName: "moveUpTemplate")
+        case .gridSpanDown: return NSImage(imageLiteralResourceName: "moveDownTemplate")
         }
     }
 
@@ -937,9 +979,11 @@ enum WindowAction: Int, Codable {
         case .almostMaximize, .previousDisplay, .nextDisplay, .larger, .smaller, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight, .center, .centerProminently, .restore, .specified, .reverseAll, .tileAll, .cascadeAll, .cascadeActiveApp, .tileActiveApp,
              .displayOne, .displayTwo, .displayThree, .displayFour, .displayFive,
              .displaySix, .displaySeven, .displayEight, .displayNine,
-             // Grid keyboard nav: intercepted before WindowManager.execute, so gaps are
-             // applied by GridLayoutManager (zoneRectWithGaps), not this path.
-             .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown:
+             // Grid keyboard nav + span: intercepted before WindowManager.execute, so
+             // gaps are applied by GridLayoutManager (zoneRectWithGaps/rangeRectWithGaps),
+             // not this path.
+             .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown,
+             .gridSpanLeft, .gridSpanRight, .gridSpanUp, .gridSpanDown:
             return .none
         }
     }
@@ -953,7 +997,7 @@ enum WindowAction: Int, Codable {
         case .topLeftNinth, .topCenterNinth, .topRightNinth, .middleLeftNinth, .middleCenterNinth, .middleRightNinth, .bottomLeftNinth, .bottomCenterNinth, .bottomRightNinth: return .ninths
         case .topLeftTwelfth, .topCenterLeftTwelfth, .topCenterRightTwelfth, .topRightTwelfth, .middleLeftTwelfth, .middleCenterLeftTwelfth, .middleCenterRightTwelfth, .middleRightTwelfth, .bottomLeftTwelfth, .bottomCenterLeftTwelfth, .bottomCenterRightTwelfth, .bottomRightTwelfth: return .twelfths
         case .topLeftSixteenth, .topCenterLeftSixteenth, .topCenterRightSixteenth, .topRightSixteenth, .upperMiddleLeftSixteenth, .upperMiddleCenterLeftSixteenth, .upperMiddleCenterRightSixteenth, .upperMiddleRightSixteenth, .lowerMiddleLeftSixteenth, .lowerMiddleCenterLeftSixteenth, .lowerMiddleCenterRightSixteenth, .lowerMiddleRightSixteenth, .bottomLeftSixteenth, .bottomCenterLeftSixteenth, .bottomCenterRightSixteenth, .bottomRightSixteenth: return .sixteenths
-        case .moveUp, .moveDown, .moveLeft, .moveRight, .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown: return .move
+        case .moveUp, .moveDown, .moveLeft, .moveRight, .gridMoveLeft, .gridMoveRight, .gridMoveUp, .gridMoveDown, .gridSpanLeft, .gridSpanRight, .gridSpanUp, .gridSpanDown: return .move
         case .almostMaximize, .maximizeHeight, .larger, .smaller, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight: return .size
         default: return nil
         }

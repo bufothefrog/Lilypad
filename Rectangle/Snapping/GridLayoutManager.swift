@@ -2,12 +2,14 @@
 //  GridLayoutManager.swift
 //  Rectangle / Lilypad
 //
-//  M7 — keyboard navigation across the active grid. A static `execute(parameters:)`
+//  M7/M8a — keyboard navigation across the active grid. A static `execute(parameters:)`
 //  interceptor (mirroring `MultiWindowManager.execute` / `TodoManager.execute`) that
 //  the `ShortcutManager.windowActionTriggered` early-return chain calls before
 //  `WindowManager.execute`. For a `gridMove*` action it infers the focused window's
 //  current zone on its monitor's active layout and moves it one zone in the arrow
-//  direction; for anything else it returns false untouched.
+//  direction (M7). For a `gridSpan*` action (M8a, grow-only) it infers the window's
+//  current cell range and grows it by one zone-line toward the arrow, beeping when the
+//  edge is already at the grid boundary. For anything else it returns false untouched.
 //
 //  This path is purely additive: the new shortcuts don't override existing behavior,
 //  so unlike the drag path it is NOT gated by `Defaults.gridModeEnabled`.
@@ -38,9 +40,13 @@ class GridLayoutManager {
     /// never reached for a grid action (it has no `calculationsByAction` entry and
     /// would beep on the missing action).
     static func execute(parameters: ExecutionParameters) -> Bool {
-        guard let direction = direction(for: parameters.action) else {
+        // Resolve the action's kind + direction. Non-grid actions return false
+        // untouched so they flow on to WindowManager.execute.
+        guard let resolved = gridAction(for: parameters.action) else {
             return false
         }
+        let kind = resolved.kind
+        let direction = resolved.direction
 
         // Resolve the target window: the carried element (e.g. from a drag/title-bar
         // source) or the current front window.
@@ -92,21 +98,42 @@ class GridLayoutManager {
         }
         let cocoaWindowRect = windowRect.screenFlipped
 
-        guard let targetZone = GridCalculation.targetZone(forWindowRect: cocoaWindowRect, in: area, layout: layout, direction: direction) else {
-            // Aligned window already at the wall in this direction (no neighbor). M8
-            // will replace this with the configurable per-edge wall action.
-            NSSound.beep()
-            return true
+        // Resolve the target Cocoa-space rect for this action kind.
+        let gapSize = Defaults.gapSize.value
+        let targetRect: CGRect
+        switch kind {
+        case .move:
+            // MOVE: hop the window one zone in the arrow direction.
+            guard let targetZone = GridCalculation.targetZone(forWindowRect: cocoaWindowRect, in: area, layout: layout, direction: direction) else {
+                // Aligned window already at the wall in this direction (no neighbor).
+                NSSound.beep()
+                return true
+            }
+            targetRect = gapSize > 0
+                ? GridCalculation.zoneRectWithGaps(layout: layout, zoneId: targetZone, in: area, gapSize: gapSize)
+                : GridCalculation.zoneRect(layout: layout, zoneId: targetZone, in: area)
+
+        case .span:
+            // SPAN (M8a, grow-only): infer the window's current cell range, grow it one
+            // cell-line toward the arrow, and commit the grown range's bounding rect.
+            guard let range = GridCalculation.cellRange(matchingWindowRect: cocoaWindowRect, in: area, layout: layout) else {
+                // The window's center is off the active grid — nothing to anchor on.
+                NSSound.beep()
+                return true
+            }
+            guard let grown = GridCalculation.grownRange(range, direction: direction, cols: layout.cols, rows: layout.rows) else {
+                // The relevant edge is already at the grid boundary — can't grow.
+                NSSound.beep()
+                return true
+            }
+            targetRect = gapSize > 0
+                ? GridCalculation.rangeRectWithGaps(grown, in: area, layout: layout, gapSize: gapSize)
+                : GridCalculation.rangeRect(grown, in: area, layout: layout)
         }
 
-        // The zone's Cocoa-space rect, gap-inset when gaps are enabled.
-        let gapSize = Defaults.gapSize.value
-        let zoneRect = gapSize > 0
-            ? GridCalculation.zoneRectWithGaps(layout: layout, zoneId: targetZone, in: area, gapSize: gapSize)
-            : GridCalculation.zoneRect(layout: layout, zoneId: targetZone, in: area)
-        guard !zoneRect.isNull else {
+        guard !targetRect.isNull else {
             NSSound.beep()
-            Logger.log("Grid move: null zone rect for zone \(targetZone)")
+            Logger.log("Grid \(kind): null target rect")
             return true
         }
 
@@ -132,18 +159,28 @@ class GridLayoutManager {
             AppDelegate.windowHistory.restoreRects[windowId] = windowRect
         }
 
-        windowManager.applyGridRect(zoneRect, screen: screen, windowElement: windowElement, windowId: windowId)
+        windowManager.applyGridRect(targetRect, screen: screen, windowElement: windowElement, windowId: windowId)
         return true
     }
 
-    /// The `GridCalculation.Direction` for a grid-move action, or `nil` if `action`
-    /// is not a grid-move action (so `execute` returns false untouched).
-    private static func direction(for action: WindowAction) -> GridCalculation.Direction? {
+    /// Whether a grid action MOVES the window to a new zone or GROWS its span.
+    private enum GridActionKind: CustomStringConvertible {
+        case move, span
+        var description: String { self == .move ? "move" : "span" }
+    }
+
+    /// The kind + `GridCalculation.Direction` for a grid action, or `nil` if `action`
+    /// is not a grid action (so `execute` returns false untouched).
+    private static func gridAction(for action: WindowAction) -> (kind: GridActionKind, direction: GridCalculation.Direction)? {
         switch action {
-        case .gridMoveLeft: return .left
-        case .gridMoveRight: return .right
-        case .gridMoveUp: return .up
-        case .gridMoveDown: return .down
+        case .gridMoveLeft: return (.move, .left)
+        case .gridMoveRight: return (.move, .right)
+        case .gridMoveUp: return (.move, .up)
+        case .gridMoveDown: return (.move, .down)
+        case .gridSpanLeft: return (.span, .left)
+        case .gridSpanRight: return (.span, .right)
+        case .gridSpanUp: return (.span, .up)
+        case .gridSpanDown: return (.span, .down)
         default: return nil
         }
     }

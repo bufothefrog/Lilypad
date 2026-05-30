@@ -39,6 +39,25 @@ enum GridCalculation {
         case left, right, up, down
     }
 
+    /// An inclusive rectangular range of grid cells, in the same (col, row)
+    /// convention as the rest of GridCalculation: `col` 0 is the LEFT, `row` 0 is
+    /// the TOP. A single cell is the degenerate range where min == max on both axes.
+    /// Powers the keyboard SPAN actions (M8a), which grow this range one cell-line
+    /// in an arrow direction and commit the range's bounding rect.
+    struct CellRange: Equatable {
+        var colMin: Int
+        var colMax: Int
+        var rowMin: Int
+        var rowMax: Int
+
+        init(colMin: Int, colMax: Int, rowMin: Int, rowMax: Int) {
+            self.colMin = colMin
+            self.colMax = colMax
+            self.rowMin = rowMin
+            self.rowMax = rowMax
+        }
+    }
+
     // MARK: - Cell geometry
 
     /// The Cocoa-space rect of a single grid cell `(col, row)` within `area`.
@@ -263,6 +282,131 @@ enum GridCalculation {
         let center = CGPoint(x: rect.midX, y: rect.midY)
         guard let anchor = zone(at: center, in: area, layout: layout) else { return nil }
         return neighbor(ofZone: anchor, direction: direction, layout: layout) ?? anchor
+    }
+
+    // MARK: - Keyboard span: cell range inference + grow
+
+    /// The inclusive cell range a window currently covers, for the keyboard SPAN
+    /// actions (M8a — grow the focused window's footprint by one cell-line).
+    ///
+    /// Two cases, both pure:
+    ///
+    /// 1. **Aligned window** — `rect`'s bounding box matches some rectangular cell
+    ///    range within `tolerance` on all four edges. We try every (colMin..colMax,
+    ///    rowMin..rowMax) range, compare its `rangeRect` to `rect`, and return the
+    ///    closest match (smallest sum of the four edge deltas), preferring the
+    ///    smallest range on ties. This recognizes both a single zone/cell and a
+    ///    window the user has already grown across several cells.
+    ///
+    /// 2. **Unaligned / free window** — no range matches. Fall back to the single
+    ///    cell under the window's CENTER (a 1×1 range), so the first SPAN press
+    ///    captures the free window onto the grid before growing. Returns `nil` only
+    ///    when the center is outside `area` (no cell to anchor on).
+    ///
+    /// `rect` and `area` are both in Cocoa bottom-left coords. Ranges are in CELL
+    /// space (not zone ids), so this composes directly with `grownRange` / `rangeRect`.
+    static func cellRange(matchingWindowRect rect: CGRect, in area: CGRect, layout: ZoneLayout, tolerance: CGFloat = 25) -> CellRange? {
+        let cols = layout.cols
+        let rows = layout.rows
+        guard cols > 0, rows > 0 else { return nil }
+        guard area.width > 0, area.height > 0 else { return nil }
+
+        // Case 1: best matching cell range within tolerance on every edge.
+        var best: CellRange? = nil
+        var bestScore = CGFloat.greatestFiniteMagnitude
+        for colMin in 0..<cols {
+            for colMax in colMin..<cols {
+                for rowMin in 0..<rows {
+                    for rowMax in rowMin..<rows {
+                        let range = CellRange(colMin: colMin, colMax: colMax, rowMin: rowMin, rowMax: rowMax)
+                        let rr = rangeRect(range, in: area, layout: layout)
+                        guard !rr.isNull else { continue }
+
+                        let dMinX = abs(rr.minX - rect.minX)
+                        let dMinY = abs(rr.minY - rect.minY)
+                        let dMaxX = abs(rr.maxX - rect.maxX)
+                        let dMaxY = abs(rr.maxY - rect.maxY)
+                        guard dMinX <= tolerance, dMinY <= tolerance,
+                              dMaxX <= tolerance, dMaxY <= tolerance else { continue }
+
+                        let cellCount = (colMax - colMin + 1) * (rowMax - rowMin + 1)
+                        // Tie-break on the smaller footprint so an exact single cell
+                        // wins over a larger range whose edges also fall within
+                        // tolerance, keeping inference tight.
+                        let score = dMinX + dMinY + dMaxX + dMaxY + CGFloat(cellCount) * tolerance
+                        if score < bestScore {
+                            bestScore = score
+                            best = range
+                        }
+                    }
+                }
+            }
+        }
+        if let best { return best }
+
+        // Case 2: free window — anchor on the cell under its center (1×1 range).
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        guard center.x >= area.minX, center.x <= area.maxX,
+              center.y >= area.minY, center.y <= area.maxY else { return nil }
+
+        let fx = Double((center.x - area.minX) / area.width)
+        let col = cellIndex(for: fx, in: layout.colBoundaries, count: cols)
+        let fyFromTop = Double((area.maxY - center.y) / area.height)
+        let row = cellIndex(for: fyFromTop, in: layout.rowBoundaries, count: rows)
+        return CellRange(colMin: col, colMax: col, rowMin: row, rowMax: row)
+    }
+
+    /// Grow a cell range by one cell-line in `direction`, or `nil` if the relevant
+    /// edge is already at the grid boundary (GROW-ONLY, M8a).
+    ///
+    /// - `.left` decrements `colMin` (adds the column to the LEFT); nil at col 0.
+    /// - `.right` increments `colMax` (adds the column to the RIGHT); nil at `cols-1`.
+    /// - `.up` decrements `rowMin` — row 0 is the TOP, so UP means a SMALLER row
+    ///   index; nil when already at row 0.
+    /// - `.down` increments `rowMax` (toward the bottom); nil at `rows-1`.
+    static func grownRange(_ range: CellRange, direction: Direction, cols: Int, rows: Int) -> CellRange? {
+        var grown = range
+        switch direction {
+        case .left:
+            guard range.colMin > 0 else { return nil }
+            grown.colMin -= 1
+        case .right:
+            guard range.colMax < cols - 1 else { return nil }
+            grown.colMax += 1
+        case .up:
+            // Up = toward the TOP = smaller row index (row 0 is the top).
+            guard range.rowMin > 0 else { return nil }
+            grown.rowMin -= 1
+        case .down:
+            // Down = toward the BOTTOM = larger row index.
+            guard range.rowMax < rows - 1 else { return nil }
+            grown.rowMax += 1
+        }
+        return grown
+    }
+
+    /// The Cocoa-space bounding rect of a cell range = the union of its corner
+    /// cells `cellRect(colMin, rowMin)` and `cellRect(colMax, rowMax)`.
+    ///
+    /// Because cells tile the area edge-to-edge, this bounding box covers every cell
+    /// in the range exactly (no gaps). Returns `.null` if either corner is out of
+    /// range. `area` is the screen's `adjustedVisibleFrame` (bottom-left origin).
+    static func rangeRect(_ range: CellRange, in area: CGRect, layout: ZoneLayout) -> CGRect {
+        let topLeft = cellRect(layout: layout, col: range.colMin, row: range.rowMin, in: area)
+        let bottomRight = cellRect(layout: layout, col: range.colMax, row: range.rowMax, in: area)
+        if topLeft.isNull { return bottomRight }
+        if bottomRight.isNull { return topLeft }
+        return topLeft.union(bottomRight)
+    }
+
+    /// `rangeRect` with Rectangle's standard gap inset applied via `GapCalculation`,
+    /// matching `zoneRectWithGaps`. Shared edges are `.none` (the "no edges shared
+    /// with neighbors" case); exact per-edge gap accounting is deferred (see
+    /// LILYPAD_PLAN.md "Risk register").
+    static func rangeRectWithGaps(_ range: CellRange, in area: CGRect, layout: ZoneLayout, gapSize: Float) -> CGRect {
+        let rect = rangeRect(range, in: area, layout: layout)
+        guard !rect.isNull, gapSize > 0 else { return rect }
+        return GapCalculation.applyGaps(rect, dimension: .both, sharedEdges: .none, gapSize: gapSize)
     }
 
     // MARK: - Gap-aware convenience
