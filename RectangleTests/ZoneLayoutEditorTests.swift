@@ -399,6 +399,261 @@ class ZoneLayoutEditorTests: XCTestCase {
     }
 }
 
+// MARK: - Ratio operations (parse + set + read)
+
+class ZoneLayoutRatioTests: XCTestCase {
+
+    private let eps = 1e-9
+
+    private func grid2x2() -> ZoneLayout {
+        ZoneLayout.uniform(cols: 2, rows: 2, id: "g", name: "g")
+    }
+
+    /// 3×2 with the two TOP cells merged into one zone (id 0).
+    private func merged3x2() -> ZoneLayout {
+        ZoneLayout(
+            id: "m", name: "m",
+            colBoundaries: [0, 1.0 / 3, 2.0 / 3, 1],
+            rowBoundaries: [0, 0.5, 1],
+            cellZones: [0, 0, 1,
+                        2, 3, 4]
+        )
+    }
+
+    private func assertValid(_ layout: ZoneLayout, file: StaticString = #file, line: UInt = #line) {
+        XCTAssertTrue(layout.isValid, "expected a valid layout: \(layout.colBoundaries) \(layout.rowBoundaries) \(layout.cellZones)", file: file, line: line)
+        XCTAssertEqual(layout.cellZones.count, layout.cols * layout.rows, "cellZones length", file: file, line: line)
+        for arr in [layout.colBoundaries, layout.rowBoundaries] {
+            XCTAssertEqual(arr.first!, 0, accuracy: eps, file: file, line: line)
+            XCTAssertEqual(arr.last!, 1, accuracy: eps, file: file, line: line)
+            for i in 1..<arr.count { XCTAssertGreaterThan(arr[i], arr[i - 1], file: file, line: line) }
+        }
+    }
+
+    // MARK: parseRatios
+
+    func testParseColonSeparated() {
+        XCTAssertEqual(ZoneLayout.parseRatios("1:2:1")!, [1, 2, 1])
+        XCTAssertEqual(ZoneLayout.parseRatios("2:3:2")!, [2, 3, 2])
+    }
+
+    func testParseAcceptsSpacesAndCommas() {
+        XCTAssertEqual(ZoneLayout.parseRatios("1 2 1")!, [1, 2, 1])
+        XCTAssertEqual(ZoneLayout.parseRatios("1, 2, 1")!, [1, 2, 1])
+        XCTAssertEqual(ZoneLayout.parseRatios(" 1 : 2 : 1 ")!, [1, 2, 1])
+        // Mixed / repeated separators don't create phantom parts.
+        XCTAssertEqual(ZoneLayout.parseRatios("1::2,,1")!, [1, 2, 1])
+    }
+
+    func testParseAcceptsDecimals() {
+        XCTAssertEqual(ZoneLayout.parseRatios("1.5:2.5")!, [1.5, 2.5])
+    }
+
+    func testParseSinglePartIsValid() {
+        XCTAssertEqual(ZoneLayout.parseRatios("3")!, [3])
+    }
+
+    func testParseRejectsEmptyAndBlank() {
+        XCTAssertNil(ZoneLayout.parseRatios(""))
+        XCTAssertNil(ZoneLayout.parseRatios("   "))
+        XCTAssertNil(ZoneLayout.parseRatios(":,: "))
+    }
+
+    func testParseRejectsNonNumeric() {
+        XCTAssertNil(ZoneLayout.parseRatios("1:a:1"))
+        XCTAssertNil(ZoneLayout.parseRatios("foo"))
+    }
+
+    func testParseRejectsZeroAndNegative() {
+        XCTAssertNil(ZoneLayout.parseRatios("1:0:1"))
+        XCTAssertNil(ZoneLayout.parseRatios("1:-2:1"))
+        XCTAssertNil(ZoneLayout.parseRatios("0"))
+    }
+
+    // MARK: cumulativeBoundaries
+
+    func testCumulativeBoundariesSimple() {
+        let b = ZoneLayout.cumulativeBoundaries(fromRatios: [1, 2, 1])!
+        XCTAssertEqual(b.count, 4)
+        XCTAssertEqual(b[0], 0, accuracy: eps)
+        XCTAssertEqual(b[1], 0.25, accuracy: eps)
+        XCTAssertEqual(b[2], 0.75, accuracy: eps)
+        XCTAssertEqual(b[3], 1, accuracy: eps)
+    }
+
+    func testCumulativeBoundaries232() {
+        let b = ZoneLayout.cumulativeBoundaries(fromRatios: [2, 3, 2])!
+        XCTAssertEqual(b[0], 0, accuracy: eps)
+        XCTAssertEqual(b[1], 2.0 / 7, accuracy: eps)
+        XCTAssertEqual(b[2], 5.0 / 7, accuracy: eps)
+        XCTAssertEqual(b[3], 1, accuracy: eps)
+    }
+
+    func testCumulativeBoundariesEndsExactlyAtOne() {
+        // Floating-point drift must not leave the last boundary != 1.
+        let b = ZoneLayout.cumulativeBoundaries(fromRatios: [1, 1, 1])!
+        XCTAssertEqual(b.last!, 1.0)  // exact, not approximate
+        XCTAssertEqual(b.first!, 0.0)
+    }
+
+    // MARK: settingColumnRatios — same count keeps merges
+
+    func testSettingColumnRatiosSameCountKeepsMerges() {
+        // merged3x2 has 3 columns; pass 3 ratios -> reposition only, keep merge.
+        let result = merged3x2().settingColumnRatios([1, 2, 1])!
+        assertValid(result)
+        XCTAssertEqual(result.cols, 3)
+        // cellZones (the merge) is untouched.
+        XCTAssertEqual(result.cellZones, merged3x2().cellZones)
+        // New boundaries are the 1:2:1 split.
+        XCTAssertEqual(result.colBoundaries[1], 0.25, accuracy: eps)
+        XCTAssertEqual(result.colBoundaries[2], 0.75, accuracy: eps)
+        // The merged top zone is still one rectangle.
+        XCTAssertTrue(result.canMerge([0]))
+    }
+
+    func testSettingRowRatiosSameCountKeepsMerges() {
+        // merged3x2 has 2 rows; pass 2 ratios -> reposition only, keep merge.
+        let result = merged3x2().settingRowRatios([1, 3])!
+        assertValid(result)
+        XCTAssertEqual(result.rows, 2)
+        XCTAssertEqual(result.cellZones, merged3x2().cellZones)
+        XCTAssertEqual(result.rowBoundaries[1], 0.25, accuracy: eps)
+    }
+
+    // MARK: settingColumnRatios — different count rebuilds identity
+
+    func testSettingColumnRatiosDifferentCountRebuildsIdentity() {
+        // merged3x2 has 3 cols; pass 2 ratios -> rebuild to 2 cols, identity.
+        let result = merged3x2().settingColumnRatios([1, 1])!
+        assertValid(result)
+        XCTAssertEqual(result.cols, 2)
+        XCTAssertEqual(result.rows, 2)
+        // cellZones length = cols*rows.
+        XCTAssertEqual(result.cellZones.count, 4)
+        // Identity (no merges): every cell its own zone.
+        XCTAssertEqual(Set(result.cellZones).count, 4)
+        XCTAssertEqual(result.cellZones, [0, 1, 2, 3])
+        // Even split.
+        XCTAssertEqual(result.colBoundaries, [0, 0.5, 1])
+    }
+
+    func testSettingRowRatiosDifferentCountRebuildsIdentity() {
+        // merged3x2 has 2 rows; pass 3 ratios -> rebuild to 3 rows, identity.
+        let result = merged3x2().settingRowRatios([1, 1, 1])!
+        assertValid(result)
+        XCTAssertEqual(result.rows, 3)
+        XCTAssertEqual(result.cols, 3)
+        XCTAssertEqual(result.cellZones.count, 9)
+        XCTAssertEqual(Set(result.cellZones).count, 9)
+        XCTAssertEqual(result.rowBoundaries[1], 1.0 / 3, accuracy: eps)
+        XCTAssertEqual(result.rowBoundaries[2], 2.0 / 3, accuracy: eps)
+    }
+
+    func testSettingRatiosRejectsInvalid() {
+        // settingColumn/RowRatios take already-parsed ratios; empty -> nil.
+        XCTAssertNil(grid2x2().settingColumnRatios([]))
+        XCTAssertNil(grid2x2().settingRowRatios([]))
+    }
+
+    func testSettingRatiosRejectsExtremeMagnitudeRatios() {
+        // Precondition: such ratios DO collapse — the interior boundary rounds to
+        // 1.0 in double precision and collides with the forced final 1, so the
+        // raw cumulative boundaries are non-ascending ([0, 1, 1]).
+        let collapsed = ZoneLayout.cumulativeBoundaries(fromRatios: [1, 1e-16])!
+        XCTAssertEqual(collapsed, [0, 1, 1])
+        // The setting ops must therefore reject them rather than commit a
+        // non-ascending (invalid) layout — "valid or nil" contract.
+        XCTAssertNil(grid2x2().settingColumnRatios([1, 1e-16]))
+        XCTAssertNil(grid2x2().settingColumnRatios([1e16, 1]))
+        XCTAssertNil(grid2x2().settingRowRatios([1, 1e-16]))
+        XCTAssertNil(grid2x2().settingRowRatios([1e16, 1]))
+    }
+
+    // MARK: current ratios read-back
+
+    func testCurrentColumnRatiosFromGaps() {
+        let layout = ZoneLayout(
+            id: "x", name: "x",
+            colBoundaries: [0, 0.25, 0.75, 1],
+            rowBoundaries: [0, 1],
+            cellZones: [0, 1, 2]
+        )
+        let ratios = layout.currentColumnRatios
+        XCTAssertEqual(ratios.count, 3)
+        XCTAssertEqual(ratios[0], 0.25, accuracy: eps)
+        XCTAssertEqual(ratios[1], 0.5, accuracy: eps)
+        XCTAssertEqual(ratios[2], 0.25, accuracy: eps)
+    }
+
+    func testCurrentColumnRatioStringReducesToSmallIntegers() {
+        // A 25/50/25 split reads as "1:2:1".
+        let layout = ZoneLayout(
+            id: "x", name: "x",
+            colBoundaries: [0, 0.25, 0.75, 1],
+            rowBoundaries: [0, 1],
+            cellZones: [0, 1, 2]
+        )
+        XCTAssertEqual(layout.currentColumnRatioString, "1:2:1")
+    }
+
+    func testCurrentRatioStringForUniformGrid() {
+        // Even thirds read as "1:1:1".
+        let layout = ZoneLayout.uniform(cols: 3, rows: 1, id: "u", name: "u")
+        XCTAssertEqual(layout.currentColumnRatioString, "1:1:1")
+    }
+
+    func testRatioStringFor232Split() {
+        // 2/7, 3/7, 2/7 should reduce back to "2:3:2".
+        let layout = ZoneLayout(
+            id: "x", name: "x",
+            colBoundaries: [0, 2.0 / 7, 5.0 / 7, 1],
+            rowBoundaries: [0, 1],
+            cellZones: [0, 1, 2]
+        )
+        XCTAssertEqual(layout.currentColumnRatioString, "2:3:2")
+    }
+
+    // MARK: round-trip current <-> setting
+
+    func testRoundTrip121() {
+        let base = ZoneLayout.uniform(cols: 3, rows: 1, id: "u", name: "u")
+        let set = base.settingColumnRatios([1, 2, 1])!
+        XCTAssertEqual(set.currentColumnRatioString, "1:2:1")
+        // Re-applying the read-back string's parsed ratios reproduces the boundaries.
+        let parsed = ZoneLayout.parseRatios(set.currentColumnRatioString)!
+        let reset = set.settingColumnRatios(parsed)!
+        XCTAssertEqual(reset.colBoundaries[1], 0.25, accuracy: eps)
+        XCTAssertEqual(reset.colBoundaries[2], 0.75, accuracy: eps)
+        assertValid(reset)
+    }
+
+    func testRoundTrip232Rows() {
+        let base = ZoneLayout.uniform(cols: 1, rows: 3, id: "u", name: "u")
+        let set = base.settingRowRatios([2, 3, 2])!
+        XCTAssertEqual(set.currentRowRatioString, "2:3:2")
+        let parsed = ZoneLayout.parseRatios(set.currentRowRatioString)!
+        let reset = set.settingRowRatios(parsed)!
+        XCTAssertEqual(reset.rowBoundaries[1], 2.0 / 7, accuracy: eps)
+        XCTAssertEqual(reset.rowBoundaries[2], 5.0 / 7, accuracy: eps)
+        assertValid(reset)
+    }
+
+    // MARK: invariants hold for an end-to-end ratio edit on a merged grid
+
+    func testRatioEditPreservesInvariantsAcrossAxes() {
+        // Start merged, change columns (same count keeps merge), then change rows
+        // to a different count (rebuilds rows to identity). Result must be valid.
+        let step1 = merged3x2().settingColumnRatios([3, 1, 3])!
+        assertValid(step1)
+        XCTAssertTrue(step1.canMerge([0]))  // merge survived same-count col change
+        let step2 = step1.settingRowRatios([1, 1, 1])!  // 2 -> 3 rows, identity rebuild
+        assertValid(step2)
+        XCTAssertEqual(step2.rows, 3)
+        XCTAssertEqual(Set(step2.cellZones).count, step2.cellZones.count)  // no merges
+    }
+}
+
 // MARK: - GridModel.updateLayout
 
 class GridModelUpdateLayoutTests: XCTestCase {

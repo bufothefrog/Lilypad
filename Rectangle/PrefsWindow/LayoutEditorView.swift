@@ -19,9 +19,23 @@
 //  display is connected, falling back to a point readout (scale 1) for a
 //  disconnected display whose backing scale we can't query.
 //
+//  RATIOS: as a precise alternative to dragging dividers the user can type an
+//  axis ratio like "1:2:1" (=> 25/50/25) into the Column / Row ratio fields.
+//  Each commit runs the pure `settingColumnRatios` / `settingRowRatios` op on the
+//  working copy; the field shows the CURRENT ratios via `currentColumn/RowRatioString`.
+//  Invalid input (empty / non-numeric / zero / negative) is a no-op with inline
+//  feedback. Changing the track COUNT on an axis resets that axis's merges (the
+//  pure op rebuilds an identity grid — documented in ZoneLayoutEditor.swift).
+//
+//  NATIVE LOOK: the sheet is grouped into labeled `GroupBox` sections (Layout
+//  ratios, Dividers, Zones), uses standard system controls + fonts + spacing, a
+//  subtle native divider/handle styling, and a proper bottom-trailing button bar
+//  (Cancel = .cancelAction/Esc, Save = the default button via .defaultAction/Return).
+//
 //  AVAILABILITY: deployment target is 10.15, so this view avoids 11+ SwiftUI
 //  API (`Menu` / `Label` / `Image(systemName:)`); it uses `GeometryReader`,
-//  `Path`, `DragGesture`, plain `Button`s, all available at 10.15.
+//  `Path`, `DragGesture`, plain `Button`s, and `GroupBox` (all 10.15). The
+//  `.keyboardShortcut` button modifiers are 11+, so they're gated with `#available`.
 //
 
 import SwiftUI
@@ -50,8 +64,13 @@ struct LayoutEditorView: View {
     /// The interior divider the user last touched (for "Remove divider").
     @State private var selectedDivider: DividerRef? = nil
 
-    /// Transient user feedback (e.g. a rejected non-rectangular merge).
+    /// Transient user feedback (e.g. a rejected non-rectangular merge or an
+    /// invalid ratio string). When non-empty the inline feedback bar shows it.
     @State private var feedback: String = ""
+
+    /// Whether the current `feedback` is an error (shown in a warning color) vs
+    /// a neutral note. Errors use the system warning tint; otherwise secondary.
+    @State private var feedbackIsError: Bool = false
 
     /// The selected monitor's pixel size (point size × backing scale), resolved
     /// once at init from the connected `NSScreen` if available.
@@ -88,16 +107,18 @@ struct LayoutEditorView: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             header
             canvasContainer
+            ratiosSection
+            dividersSection
+            zonesSection
             feedbackBar
-            controlBar
             Divider()
             footer
         }
-        .padding(16)
-        .frame(minWidth: 560, minHeight: 520)
+        .padding(20)
+        .frame(minWidth: 580, minHeight: 600)
     }
 
     private var header: some View {
@@ -105,9 +126,10 @@ struct LayoutEditorView: View {
             Text(NSLocalizedString("Edit Layout", tableName: "Main", value: "Edit Layout", comment: "Layout editor sheet title"))
                 .font(.headline)
             Text(resolutionSubtitle)
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundColor(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var resolutionSubtitle: String {
@@ -143,8 +165,12 @@ struct LayoutEditorView: View {
             // Interior divider handles (drawn on top so they're draggable).
             dividerHandles(local: local)
         }
-        .background(Color(white: 0.12))
-        .border(Color.secondary, width: 1)
+        .background(Color(NSColor.controlBackgroundColor))
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+        )
+        .cornerRadius(4)
     }
 
     private func zoneView(zoneId: Int, local: CGRect) -> some View {
@@ -156,13 +182,16 @@ struct LayoutEditorView: View {
                            height: cocoaRect.height)
         let isSelected = selectedZones.contains(zoneId)
         return ZStack {
-            Rectangle()
-                .fill(isSelected ? Color.accentColor.opacity(0.35) : Color(white: 0.28))
-            Rectangle()
-                .stroke(isSelected ? Color.accentColor : Color(white: 0.5), lineWidth: isSelected ? 2 : 1)
+            RoundedRectangle(cornerRadius: 3)
+                .fill(isSelected
+                      ? Color.accentColor.opacity(0.22)
+                      : Color(NSColor.unemphasizedSelectedContentBackgroundColor))
+            RoundedRectangle(cornerRadius: 3)
+                .stroke(isSelected ? Color.accentColor : Color(NSColor.separatorColor),
+                        lineWidth: isSelected ? 2 : 1)
             Text(pixelReadout(for: cocoaRect, canvas: local))
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.white)
+                .foregroundColor(isSelected ? Color.accentColor : Color(NSColor.secondaryLabelColor))
                 .padding(2)
         }
         .frame(width: max(frame.width - 2, 0), height: max(frame.height - 2, 0))
@@ -205,8 +234,11 @@ struct LayoutEditorView: View {
         let x = CGFloat(working.colBoundaries[index]) * local.width
         let isSel = selectedDivider == DividerRef(axis: .column, index: index)
         return Rectangle()
-            .fill(isSel ? Color.accentColor : Color.orange.opacity(0.85))
-            .frame(width: isSel ? 5 : 3, height: local.height)
+            .fill(isSel ? Color.accentColor : Color(NSColor.separatorColor))
+            .frame(width: isSel ? 4 : 2, height: local.height)
+            // Widen the interactive target without widening the drawn line.
+            .frame(width: 11)
+            .contentShape(Rectangle())
             .position(x: x, y: local.height / 2)
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -228,8 +260,11 @@ struct LayoutEditorView: View {
         let y = CGFloat(working.rowBoundaries[index]) * local.height
         let isSel = selectedDivider == DividerRef(axis: .row, index: index)
         return Rectangle()
-            .fill(isSel ? Color.accentColor : Color.orange.opacity(0.85))
-            .frame(width: local.width, height: isSel ? 5 : 3)
+            .fill(isSel ? Color.accentColor : Color(NSColor.separatorColor))
+            .frame(width: local.width, height: isSel ? 4 : 2)
+            // Widen the interactive target without widening the drawn line.
+            .frame(height: 11)
+            .contentShape(Rectangle())
             .position(x: local.width / 2, y: y)
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -245,23 +280,62 @@ struct LayoutEditorView: View {
             .onTapGesture { selectedDivider = DividerRef(axis: .row, index: index) }
     }
 
-    // MARK: - Feedback + controls
+    // MARK: - Ratios section
 
-    private var feedbackBar: some View {
-        Text(feedback)
-            .font(.caption)
-            .foregroundColor(.orange)
-            .frame(height: 14, alignment: .leading)
+    /// Type-in column / row ratios, the precise alternative to dragging dividers.
+    /// Shows the current ratios; commits via the pure ratio ops on Return / focus
+    /// loss. Invalid input is a no-op with inline feedback.
+    private var ratiosSection: some View {
+        editorGroupBox(NSLocalizedString("Layout Ratios", tableName: "Main", value: "Layout Ratios", comment: "Ratio inputs section header")) {
+            VStack(alignment: .leading, spacing: 8) {
+                ratioRow(
+                    label: NSLocalizedString("Columns", tableName: "Main", value: "Columns", comment: "Column ratios field label"),
+                    current: working.currentColumnRatioString,
+                    onCommit: { applyColumnRatios($0) }
+                )
+                ratioRow(
+                    label: NSLocalizedString("Rows", tableName: "Main", value: "Rows", comment: "Row ratios field label"),
+                    current: working.currentRowRatioString,
+                    onCommit: { applyRowRatios($0) }
+                )
+                Text(NSLocalizedString("Type proportions like \u{201C}1:2:1\u{201D}. Changing the number of tracks resets that axis\u{2019}s merges.", tableName: "Main", value: "Type proportions like \u{201C}1:2:1\u{201D}. Changing the number of tracks resets that axis\u{2019}s merges.", comment: "Ratio field help"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
     }
 
-    private var controlBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func ratioRow(label: String, current: String, onCommit: @escaping (String) -> Void) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .frame(width: 70, alignment: .leading)
+            // A self-seeding field: it re-reads `current` whenever the working
+            // layout's ratios change (via `.id`), so dragging a divider updates
+            // the displayed ratio, and a rejected commit snaps back.
+            RatioField(current: current, onCommit: onCommit)
+                .frame(maxWidth: 200, alignment: .leading)
+            Spacer()
+        }
+    }
+
+    // MARK: - Dividers section
+
+    private var dividersSection: some View {
+        editorGroupBox(NSLocalizedString("Dividers", tableName: "Main", value: "Dividers", comment: "Dividers section header")) {
             HStack(spacing: 8) {
                 Button(NSLocalizedString("Add Column", tableName: "Main", value: "Add Column", comment: "")) { addColumn() }
                 Button(NSLocalizedString("Add Row", tableName: "Main", value: "Add Row", comment: "")) { addRow() }
                 Button(NSLocalizedString("Remove Divider", tableName: "Main", value: "Remove Divider", comment: "")) { removeSelectedDivider() }
                     .disabled(selectedDivider == nil)
+                Spacer()
             }
+        }
+    }
+
+    // MARK: - Zones section
+
+    private var zonesSection: some View {
+        editorGroupBox(NSLocalizedString("Zones", tableName: "Main", value: "Zones", comment: "Zones section header")) {
             HStack(spacing: 8) {
                 // Enabled for ANY 2+ selection (not only rectangular ones) so a
                 // non-rectangular pick reaches the rejection feedback in
@@ -274,7 +348,7 @@ struct LayoutEditorView: View {
                 Button(NSLocalizedString("Clear Selection", tableName: "Main", value: "Clear Selection", comment: "")) {
                     selectedZones = []
                     selectedDivider = nil
-                    feedback = ""
+                    clearFeedback()
                 }
                 .disabled(selectedZones.isEmpty && selectedDivider == nil)
                 Spacer()
@@ -285,13 +359,53 @@ struct LayoutEditorView: View {
         }
     }
 
+    // MARK: - Feedback + footer
+
+    private var feedbackBar: some View {
+        Text(feedback)
+            .font(.caption)
+            .foregroundColor(feedbackIsError ? Color(NSColor.systemRed) : .secondary)
+            .frame(height: 14, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var footer: some View {
         HStack {
             Spacer()
-            // No `.keyboardShortcut` (11+ only); the project targets 10.15.
-            Button(NSLocalizedString("Cancel", tableName: "Main", value: "Cancel", comment: "")) { onClose() }
-            Button(NSLocalizedString("Save", tableName: "Main", value: "Save", comment: "")) { save() }
-                .disabled(!working.isValid)
+            cancelButton
+            saveButton
+        }
+    }
+
+    @ViewBuilder
+    private var cancelButton: some View {
+        let button = Button(NSLocalizedString("Cancel", tableName: "Main", value: "Cancel", comment: "")) { onClose() }
+        if #available(macOS 11.0, *) {
+            button.keyboardShortcut(.cancelAction)
+        } else {
+            button
+        }
+    }
+
+    @ViewBuilder
+    private var saveButton: some View {
+        // Save is the default button (highlighted, triggered by Return).
+        let button = Button(NSLocalizedString("Save", tableName: "Main", value: "Save", comment: "")) { save() }
+            .disabled(!working.isValid)
+        if #available(macOS 11.0, *) {
+            button.keyboardShortcut(.defaultAction)
+        } else {
+            button
+        }
+    }
+
+    /// A labeled `GroupBox` (10.15) wrapping section content with the native
+    /// grouped-section look and consistent inner padding.
+    private func editorGroupBox<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        GroupBox(label: Text(title).font(.subheadline).bold()) {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 4)
         }
     }
 
@@ -304,12 +418,58 @@ struct LayoutEditorView: View {
     }
 
     private func toggleZoneSelection(_ zoneId: Int) {
-        feedback = ""
+        clearFeedback()
         if selectedZones.contains(zoneId) {
             selectedZones.remove(zoneId)
         } else {
             selectedZones.insert(zoneId)
         }
+    }
+
+    // MARK: - Feedback helpers
+
+    private func showError(_ message: String) {
+        feedback = message
+        feedbackIsError = true
+    }
+
+    private func clearFeedback() {
+        feedback = ""
+        feedbackIsError = false
+    }
+
+    // MARK: - Ratio actions
+
+    /// Apply a typed COLUMN ratio string (e.g. "1:2:1"). Parses, then runs the
+    /// pure `settingColumnRatios`. Invalid input is a no-op with inline feedback.
+    private func applyColumnRatios(_ string: String) {
+        guard let ratios = ZoneLayout.parseRatios(string) else {
+            showError(NSLocalizedString("Enter positive numbers like \u{201C}1:2:1\u{201D}.", tableName: "Main", value: "Enter positive numbers like \u{201C}1:2:1\u{201D}.", comment: "Invalid ratio input"))
+            return
+        }
+        guard let next = working.settingColumnRatios(ratios) else {
+            showError(NSLocalizedString("Couldn\u{2019}t apply those column ratios.", tableName: "Main", value: "Couldn\u{2019}t apply those column ratios.", comment: "Ratio apply failed"))
+            return
+        }
+        clearFeedback()
+        working = next
+        // A track-count change rebuilds zones, so stale selection must drop.
+        resetSelectionAfterStructuralEdit()
+    }
+
+    /// Apply a typed ROW ratio string. Same contract as `applyColumnRatios`.
+    private func applyRowRatios(_ string: String) {
+        guard let ratios = ZoneLayout.parseRatios(string) else {
+            showError(NSLocalizedString("Enter positive numbers like \u{201C}1:2:1\u{201D}.", tableName: "Main", value: "Enter positive numbers like \u{201C}1:2:1\u{201D}.", comment: "Invalid ratio input"))
+            return
+        }
+        guard let next = working.settingRowRatios(ratios) else {
+            showError(NSLocalizedString("Couldn\u{2019}t apply those row ratios.", tableName: "Main", value: "Couldn\u{2019}t apply those row ratios.", comment: "Ratio apply failed"))
+            return
+        }
+        clearFeedback()
+        working = next
+        resetSelectionAfterStructuralEdit()
     }
 
     // MARK: - Edit actions (all run a pure op on `working`)
@@ -321,7 +481,7 @@ struct LayoutEditorView: View {
             working = next
             resetSelectionAfterStructuralEdit()
         } else {
-            feedback = NSLocalizedString("Could not add a column there.", tableName: "Main", value: "Could not add a column there.", comment: "")
+            showError(NSLocalizedString("Could not add a column there.", tableName: "Main", value: "Could not add a column there.", comment: ""))
         }
     }
 
@@ -331,7 +491,7 @@ struct LayoutEditorView: View {
             working = next
             resetSelectionAfterStructuralEdit()
         } else {
-            feedback = NSLocalizedString("Could not add a row there.", tableName: "Main", value: "Could not add a row there.", comment: "")
+            showError(NSLocalizedString("Could not add a row there.", tableName: "Main", value: "Could not add a row there.", comment: ""))
         }
     }
 
@@ -346,7 +506,7 @@ struct LayoutEditorView: View {
             working = next
             resetSelectionAfterStructuralEdit()
         } else {
-            feedback = NSLocalizedString("That divider can't be removed.", tableName: "Main", value: "That divider can't be removed.", comment: "")
+            showError(NSLocalizedString("That divider can't be removed.", tableName: "Main", value: "That divider can't be removed.", comment: ""))
         }
     }
 
@@ -356,7 +516,7 @@ struct LayoutEditorView: View {
             working = next
             resetSelectionAfterStructuralEdit()
         } else {
-            feedback = NSLocalizedString("Those zones don't form a rectangle — can't merge.", tableName: "Main", value: "Those zones don't form a rectangle — can't merge.", comment: "Non-rectangular merge rejection")
+            showError(NSLocalizedString("Those zones don't form a rectangle — can't merge.", tableName: "Main", value: "Those zones don't form a rectangle — can't merge.", comment: "Non-rectangular merge rejection"))
         }
     }
 
@@ -377,7 +537,7 @@ struct LayoutEditorView: View {
 
     private func save() {
         guard working.isValid else {
-            feedback = NSLocalizedString("Layout is invalid; not saved.", tableName: "Main", value: "Layout is invalid; not saved.", comment: "")
+            showError(NSLocalizedString("Layout is invalid; not saved.", tableName: "Main", value: "Layout is invalid; not saved.", comment: ""))
             return
         }
         GridModel.instance.updateLayout(working, forDisplay: displayUUID)
@@ -435,5 +595,36 @@ struct LayoutEditorView: View {
             return (CGSize(width: pts.width * scale, height: pts.height * scale), true)
         }
         return (CGSize(width: 1920, height: 1080), false)
+    }
+}
+
+// MARK: - Ratio text field
+
+/// A single-line ratio editor that keeps the in-progress text in its OWN local
+/// `@State` and only reports a final value through `onCommit` (Return / focus
+/// loss), mirroring `LayoutNameField`. It re-seeds its text from the committed
+/// `current` value (via `.id(current)`) whenever the working layout's ratios
+/// change externally — e.g. after a divider drag updates the proportions, or a
+/// rejected invalid commit snaps the field back to the current ratios.
+///
+/// `TextField(_:text:onCommit:)` and `RoundedBorderTextFieldStyle` are both
+/// available at the 10.15 deployment target.
+private struct RatioField: View {
+    let current: String
+    let onCommit: (String) -> Void
+
+    @State private var text: String
+
+    init(current: String, onCommit: @escaping (String) -> Void) {
+        self.current = current
+        self.onCommit = onCommit
+        _text = State(initialValue: current)
+    }
+
+    var body: some View {
+        TextField("1:2:1", text: $text, onCommit: { onCommit(text) })
+            .textFieldStyle(RoundedBorderTextFieldStyle())
+            .font(.system(.body, design: .monospaced))
+            .id(current)
     }
 }

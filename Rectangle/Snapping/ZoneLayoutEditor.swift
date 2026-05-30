@@ -368,6 +368,206 @@ extension ZoneLayout {
         return ZoneLayout(id: id, name: name, colBoundaries: colBoundaries, rowBoundaries: rowBoundaries, cellZones: newCellZones)
     }
 
+    // MARK: - Ratios (precise alternative to dragging dividers)
+
+    /// Parse an axis-ratio string like `"1:2:1"` or `"2:3:2"` into positive
+    /// numbers. Accepts `:`, `,`, or whitespace as separators (and a mix), so
+    /// `"1 2 1"`, `"1, 2, 1"`, and `"1:2:1"` all parse the same. Returns `nil`
+    /// when the string is empty/blank, has fewer than 1 part, contains a
+    /// non-numeric token, or any part is zero or negative — the editor treats a
+    /// `nil` as invalid input (a no-op with inline feedback).
+    static func parseRatios(_ string: String) -> [Double]? {
+        // Split on any run of colons, commas, or whitespace; drop empties so
+        // leading/trailing/duplicate separators don't produce phantom parts.
+        let separators = CharacterSet(charactersIn: ":,").union(.whitespaces)
+        let tokens = string
+            .components(separatedBy: separators)
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return nil }
+
+        var values: [Double] = []
+        values.reserveCapacity(tokens.count)
+        for token in tokens {
+            guard let value = Double(token) else { return nil }
+            guard value.isFinite, value > 0 else { return nil }
+            values.append(value)
+        }
+        return values
+    }
+
+    /// Convert a list of positive ratios into NORMALIZED CUMULATIVE boundaries.
+    /// `[1, 2, 1]` -> `[0, 0.25, 0.75, 1]`; `[2, 3, 2]` -> `[0, 2/7, 5/7, 1]`.
+    /// The first entry is always 0 and the last always 1 (forced exactly so the
+    /// boundary-validity invariant holds despite floating-point drift). Returns
+    /// `nil` if `ratios` is empty or sums to a non-positive value.
+    static func cumulativeBoundaries(fromRatios ratios: [Double]) -> [Double]? {
+        guard !ratios.isEmpty else { return nil }
+        let total = ratios.reduce(0, +)
+        guard total > 0 else { return nil }
+
+        var boundaries: [Double] = [0]
+        boundaries.reserveCapacity(ratios.count + 1)
+        var running = 0.0
+        for ratio in ratios.dropLast() {
+            running += ratio
+            boundaries.append(running / total)
+        }
+        boundaries.append(1)
+        return boundaries
+    }
+
+    /// Set the COLUMN proportions from `ratios` (e.g. `[1, 2, 1]` => 25/50/25).
+    ///
+    /// cellZones rule:
+    ///  - If `ratios.count == cols` (the current column track count), only the
+    ///    boundaries move — `cellZones`/merges are KEPT untouched.
+    ///  - If it DIFFERS, the column track count is changing, so the grid is
+    ///    rebuilt on this axis to an IDENTITY (no-merge) `cellZones` of the new
+    ///    size. Changing the track count RESETS merges (documented, by design —
+    ///    there is no meaningful way to preserve arbitrary merges across a
+    ///    column-count change).
+    ///
+    /// Returns a VALID layout (ascending boundaries in 0...1, correct `cellZones`
+    /// length) or `nil`. `nil` for empty/zero/negative ratios, and also for
+    /// extreme-magnitude ratios whose cumulative boundaries collapse in double
+    /// precision into a non-ascending (invalid) sequence.
+    func settingColumnRatios(_ ratios: [Double]) -> ZoneLayout? {
+        guard let newCols = Self.cumulativeBoundaries(fromRatios: ratios) else { return nil }
+        let newColCount = ratios.count
+        let result: ZoneLayout
+        if newColCount == cols {
+            // Same track count — reposition only, preserve merges.
+            result = ZoneLayout(id: id, name: name, colBoundaries: newCols, rowBoundaries: rowBoundaries, cellZones: cellZones)
+        } else {
+            // Track count changed — rebuild this axis to an identity grid (resets merges).
+            let newCellZones = Self.identityCellZones(cols: newColCount, rows: rows)
+            result = ZoneLayout(id: id, name: name, colBoundaries: newCols, rowBoundaries: rowBoundaries, cellZones: newCellZones)
+        }
+        // Guard the boundary-validity invariant: extreme-magnitude ratios (e.g.
+        // "1:1e-16") can produce floating-point-collapsed, non-ascending
+        // boundaries, so reject anything that isn't valid — mirroring
+        // removingColumnBoundary/removingRowBoundary's "valid or nil" contract.
+        guard result.isValid else { return nil }
+        return result
+    }
+
+    /// Set the ROW proportions from `ratios` (measured from the top). Same
+    /// cellZones rule and contract as `settingColumnRatios` but on the row axis:
+    /// same-count repositions and keeps merges, a different count rebuilds an
+    /// identity grid (resets merges). Returns `nil` for empty/zero/negative ratios
+    /// and for extreme-magnitude ratios that collapse into an invalid layout.
+    func settingRowRatios(_ ratios: [Double]) -> ZoneLayout? {
+        guard let newRows = Self.cumulativeBoundaries(fromRatios: ratios) else { return nil }
+        let newRowCount = ratios.count
+        let result: ZoneLayout
+        if newRowCount == rows {
+            result = ZoneLayout(id: id, name: name, colBoundaries: colBoundaries, rowBoundaries: newRows, cellZones: cellZones)
+        } else {
+            let newCellZones = Self.identityCellZones(cols: cols, rows: newRowCount)
+            result = ZoneLayout(id: id, name: name, colBoundaries: colBoundaries, rowBoundaries: newRows, cellZones: newCellZones)
+        }
+        // Reject extreme-magnitude ratios that collapse to non-ascending
+        // boundaries (see settingColumnRatios) — keep the "valid or nil" contract.
+        guard result.isValid else { return nil }
+        return result
+    }
+
+    /// The current COLUMN proportions, derived from the gaps between consecutive
+    /// `colBoundaries` (so a 25/50/25 split reads as `[0.25, 0.5, 0.25]`). These
+    /// are the raw fractional widths; `currentColumnRatioString` reduces them to
+    /// small integers for display.
+    var currentColumnRatios: [Double] {
+        Self.gaps(of: colBoundaries)
+    }
+
+    /// The current ROW proportions, derived from the gaps between consecutive
+    /// `rowBoundaries` (top to bottom).
+    var currentRowRatios: [Double] {
+        Self.gaps(of: rowBoundaries)
+    }
+
+    /// The current column proportions as a display string like `"1:2:1"`,
+    /// reduced to the smallest integer ratio when the split is (near-)rational
+    /// with a small denominator, else a proportional decimal readout.
+    var currentColumnRatioString: String {
+        Self.ratioString(from: currentColumnRatios)
+    }
+
+    /// The current row proportions as a display string like `"1:2:1"`.
+    var currentRowRatioString: String {
+        Self.ratioString(from: currentRowRatios)
+    }
+
+    // MARK: - Ratio helpers
+
+    /// The consecutive differences of an ascending boundary array (the per-track
+    /// fractional sizes). `[0, 0.25, 0.75, 1]` -> `[0.25, 0.5, 0.25]`.
+    private static func gaps(of boundaries: [Double]) -> [Double] {
+        guard boundaries.count >= 2 else { return [] }
+        var result: [Double] = []
+        result.reserveCapacity(boundaries.count - 1)
+        for i in 1..<boundaries.count {
+            result.append(boundaries[i] - boundaries[i - 1])
+        }
+        return result
+    }
+
+    /// Identity (no-merge) `cellZones` of a given size: `0, 1, 2, …` row-major.
+    private static func identityCellZones(cols: Int, rows: Int) -> [Int] {
+        let c = max(cols, 1)
+        let r = max(rows, 1)
+        return Array(0..<(c * r))
+    }
+
+    /// Render proportions as a colon-separated ratio of small integers, e.g.
+    /// `[0.25, 0.5, 0.25]` -> `"1:2:1"`. Tries successive denominators (up to a
+    /// modest cap) and, if every part rounds cleanly to an integer at that
+    /// denominator, reduces by the gcd. Falls back to a one-decimal proportional
+    /// readout (each part divided by the smallest part) when no small-integer
+    /// ratio fits.
+    static func ratioString(from proportions: [Double]) -> String {
+        guard !proportions.isEmpty else { return "" }
+        let total = proportions.reduce(0, +)
+        guard total > 0 else { return "" }
+        let normalized = proportions.map { $0 / total }
+
+        let tolerance = 0.01
+        for denom in 1...48 {
+            var ints: [Int] = []
+            var clean = true
+            for value in normalized {
+                let scaled = value * Double(denom)
+                let rounded = scaled.rounded()
+                if abs(scaled - rounded) > tolerance || rounded < 1 {
+                    clean = false
+                    break
+                }
+                ints.append(Int(rounded))
+            }
+            if clean {
+                let divisor = ints.reduce(0) { gcd($0, $1) }
+                let reduced = divisor > 1 ? ints.map { $0 / divisor } : ints
+                return reduced.map { String($0) }.joined(separator: ":")
+            }
+        }
+
+        // No clean small-integer ratio — show proportional decimals relative to
+        // the smallest part (still a usable, re-typable ratio).
+        let smallest = normalized.min() ?? 1
+        let scaled = normalized.map { smallest > 0 ? $0 / smallest : $0 }
+        return scaled.map { String(format: "%.2g", $0) }.joined(separator: ":")
+    }
+
+    /// Greatest common divisor (Euclid), for reducing an integer ratio.
+    private static func gcd(_ a: Int, _ b: Int) -> Int {
+        var x = abs(a)
+        var y = abs(b)
+        while y != 0 {
+            (x, y) = (y, x % y)
+        }
+        return x
+    }
+
     // MARK: - Validation
 
     /// True iff this layout satisfies every invariant the runtime assumes:
