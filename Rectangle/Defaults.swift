@@ -106,6 +106,11 @@ class Defaults {
     /// Master toggle for the Lilypad grid system. While false, classic edge snapping is used.
     /// Built additively so the grid path can be developed without disrupting existing behavior.
     static let gridModeEnabled = BoolDefault(key: "gridModeEnabled")
+    /// Per-monitor named grid layouts, keyed by display UUID. See GridLayoutModel.
+    static let gridLayoutsByDisplay = JSONDefault<[String:PerDisplayLayouts]>(key: "gridLayoutsByDisplay")
+    /// Modifier held during a grid drag to extend a multi-zone span. Default Option (matches BentoBox);
+    /// stored as an NSEvent.ModifierFlags rawValue, configurable like snapModifiers.
+    static let gridSpanModifier = IntDefault(key: "gridSpanModifier", defaultValue: Int(NSEvent.ModifierFlags.option.rawValue))
 
     static var array: [Default] = [
         launchOnLogin,
@@ -194,7 +199,9 @@ class Defaults {
         systemWideMouseDownApps,
         screensOrderedByX,
         showAdditionalSizesInMenu,
-        gridModeEnabled
+        gridModeEnabled,
+        gridLayoutsByDisplay,
+        gridSpanModifier
     ]
 }
 
