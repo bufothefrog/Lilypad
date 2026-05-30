@@ -232,6 +232,15 @@ class AccessibilityElement {
     var isMinimized: Bool? {
         windowElement?.wrappedElement.getValue(.minimized) as? Bool
     }
+
+    /// Minimize the window by setting the AX `kAXMinimizedAttribute` (NSAccessibility
+    /// `.minimized`) to true on the window element — the AX equivalent of clicking the
+    /// yellow traffic-light. Rectangle has no minimize action otherwise; this backs the
+    /// Lilypad grid edge wall action (M8b). Mirrors how `isMainWindow`'s setter writes a
+    /// Bool attribute on `windowElement`. No-op if there is no resolvable window element.
+    func minimize() {
+        windowElement?.wrappedElement.setValue(.minimized, true)
+    }
     
     var isFullScreen: Bool? {
         guard let subrole = windowElement?.getElementValue(.fullScreenButton)?.subrole else { return nil }

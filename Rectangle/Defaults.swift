@@ -122,6 +122,16 @@ class Defaults {
     /// When enabled, the selected zone uses the system accent color instead of gridSelectedZoneColor.
     static let gridUseAccentForSelected = OptionalBoolDefault(key: "gridUseAccentForSelected")
 
+    // MARK: Per-edge wall actions (M8b)
+    /// What a `gridMove<dir>` shortcut does when the window is already at the wall in
+    /// that direction and the user got there by a consecutive grid move ("hit it
+    /// again"). One configurable `EdgeAction` per edge. Defaults match the user's
+    /// example: UP -> maximize, DOWN -> minimize, LEFT/RIGHT -> none (just beep).
+    static let gridWallActionUp = IntEnumDefault<EdgeAction>(key: "gridWallActionUp", defaultValue: .maximize)
+    static let gridWallActionDown = IntEnumDefault<EdgeAction>(key: "gridWallActionDown", defaultValue: .minimize)
+    static let gridWallActionLeft = IntEnumDefault<EdgeAction>(key: "gridWallActionLeft", defaultValue: .none)
+    static let gridWallActionRight = IntEnumDefault<EdgeAction>(key: "gridWallActionRight", defaultValue: .none)
+
     static var array: [Default] = [
         launchOnLogin,
         disabledApps,
@@ -215,7 +225,11 @@ class Defaults {
         gridSpanModifier,
         gridSelectedZoneColor,
         gridUnselectedZoneColor,
-        gridUseAccentForSelected
+        gridUseAccentForSelected,
+        gridWallActionUp,
+        gridWallActionDown,
+        gridWallActionLeft,
+        gridWallActionRight
     ]
 }
 

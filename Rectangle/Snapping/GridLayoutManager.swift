@@ -105,9 +105,14 @@ class GridLayoutManager {
         case .move:
             // MOVE: hop the window one zone in the arrow direction.
             guard let targetZone = GridCalculation.targetZone(forWindowRect: cocoaWindowRect, in: area, layout: layout, direction: direction) else {
-                // Aligned window already at the wall in this direction (no neighbor).
-                NSSound.beep()
-                return true
+                // Aligned window already at the WALL in this direction (no neighbor).
+                // Either fire the configured per-edge wall action ("hit it again"), or
+                // beep + prime so the NEXT consecutive press fires. See the helper docs.
+                return handleWall(direction: direction,
+                                  action: parameters.action,
+                                  windowElement: windowElement,
+                                  windowId: windowId,
+                                  screen: screen)
             }
             targetRect = gapSize > 0
                 ? GridCalculation.zoneRectWithGaps(layout: layout, zoneId: targetZone, in: area, gapSize: gapSize)
@@ -160,6 +165,110 @@ class GridLayoutManager {
         }
 
         windowManager.applyGridRect(targetRect, screen: screen, windowElement: windowElement, windowId: windowId)
+
+        // Record the grid action itself as the last action on this window so the
+        // repeat-at-wall detection (M8b) recognizes a CONSECUTIVE grid move. The
+        // first move that lands the window in the edge zone records `gridMove<dir>`;
+        // the NEXT press that finds no neighbor (targetZone == nil) sees this same
+        // action recorded and fires the configured edge wall action. applyGridRect
+        // itself records `.specified` (for restore/history); we overwrite the action
+        // here with the window's actual resulting frame so a later non-grid action's
+        // `windowMovedExternally` check still compares against the true frame.
+        // SPAN does not participate in wall actions, so only the MOVE kind records.
+        if kind == .move {
+            recordGridMove(parameters.action, windowElement: windowElement, windowId: windowId)
+        }
+        return true
+    }
+
+    /// Overwrite `lastRectangleActions[windowId]` with `action` (a `gridMove<dir>`)
+    /// and the window's CURRENT frame, so a consecutive grid move into the wall is
+    /// detectable. Mirrors `WindowManager.recordAction`'s count bookkeeping (bump the
+    /// count when the previous action matched) so the value behaves like any other
+    /// recorded action.
+    private static func recordGridMove(_ action: WindowAction, windowElement: AccessibilityElement, windowId: CGWindowID) {
+        let resultingRect = windowElement.frame
+        let newCount: Int
+        if let last = AppDelegate.windowHistory.lastRectangleActions[windowId], last.action == action {
+            newCount = last.count + 1
+        } else {
+            newCount = 1
+        }
+        AppDelegate.windowHistory.lastRectangleActions[windowId] = RectangleAction(
+            action: action,
+            subAction: nil,
+            rect: resultingRect,
+            count: newCount
+        )
+    }
+
+    /// Decide what happens when a `gridMove<dir>` lands on a wall (no neighbor zone in
+    /// `direction`): either FIRE the per-edge `EdgeAction` (the user's "hit it again"
+    /// behavior) or BEEP and PRIME so the next consecutive press fires. Always returns
+    /// `true` (the grid action is consumed either way).
+    ///
+    /// REPEAT-AT-WALL: the edge action fires only on a CONSECUTIVE wall press —
+    /// `shouldFireWallAction` requires the previously recorded action on this window to
+    /// be the same `gridMove<dir>`. A window that STARTS at the wall (no prior grid
+    /// move, or a different last action) does NOT fire on the first press: it beeps and
+    /// records `gridMove<dir>`, so the SECOND press fires. When the configured action is
+    /// `.none`, it always just beeps + primes.
+    private static func handleWall(direction: GridCalculation.Direction,
+                                   action: WindowAction,
+                                   windowElement: AccessibilityElement,
+                                   windowId: CGWindowID,
+                                   screen: NSScreen) -> Bool {
+        let edgeAction = Self.wallAction(for: direction)
+        let lastWasSameMove = AppDelegate.windowHistory.lastRectangleActions[windowId]?.action == action
+
+        guard Self.shouldFireWallAction(edgeAction: edgeAction, atWall: true, lastActionWasSameMove: lastWasSameMove) else {
+            // Either edgeAction is .none, or this is the first press at the wall.
+            // Beep, and record the grid move so the next consecutive press fires.
+            NSSound.beep()
+            recordGridMove(action, windowElement: windowElement, windowId: windowId)
+            return true
+        }
+
+        // Fire the configured edge action.
+        switch edgeAction {
+        case .none:
+            // Unreachable (guarded above), but keep exhaustive.
+            NSSound.beep()
+        case .minimize:
+            // AX-minimize the window directly (Rectangle has no minimize action).
+            windowElement.minimize()
+            // Clear history so a subsequent press starts fresh (don't re-fire on the
+            // now-minimized window).
+            AppDelegate.windowHistory.lastRectangleActions.removeValue(forKey: windowId)
+        case .maximize, .half, .nextDisplay:
+            // Reuse the existing WindowManager machinery (calculation + gaps + history +
+            // restore) by firing the corresponding WindowAction through the normal path.
+            guard let mappedAction = Self.windowAction(for: edgeAction, direction: direction),
+                  let windowManager = WindowManager.instance else {
+                NSSound.beep()
+                return true
+            }
+            // Clear the grid-move history BEFORE executing so the fired action's own
+            // recordAction is what lands in history (preventing a loop where the next
+            // press would see the gridMove and immediately re-fire). The fired action
+            // records its own last action + (for non-display actions) restore rect.
+            AppDelegate.windowHistory.lastRectangleActions.removeValue(forKey: windowId)
+            // For .maximize/.half a fixed single screen is correct, so pass the
+            // already-resolved screen so the action acts on the same target. For the
+            // display actions (.nextDisplay/.previousDisplay) DO NOT force a screen:
+            // WindowManager.execute would build `UsableScreens(currentScreen:, numScreens: 1)`
+            // with `adjacentScreens == nil`, and NextPrevDisplayCalculation bails on its
+            // `numScreens > 1` guard — so the move would always no-op + beep no matter how
+            // many displays are attached. Passing `screen: nil` lets execute run full
+            // ScreenDetection (real numScreens + adjacentScreens) against the same window.
+            let forcedScreen: NSScreen? = (mappedAction == .nextDisplay || mappedAction == .previousDisplay)
+                ? nil
+                : screen
+            windowManager.execute(ExecutionParameters(mappedAction,
+                                                      screen: forcedScreen,
+                                                      windowElement: windowElement,
+                                                      windowId: windowId))
+        }
         return true
     }
 
@@ -184,4 +293,91 @@ class GridLayoutManager {
         default: return nil
         }
     }
+
+    // MARK: - Per-edge wall-action decisions (M8b, pure + unit-tested)
+
+    /// The configured `EdgeAction` for the wall in `direction`, read from the per-edge
+    /// Defaults (`gridWallAction<Edge>`). Pure mapping from direction -> edge -> action.
+    static func wallAction(for direction: GridCalculation.Direction) -> EdgeAction {
+        switch direction {
+        case .up:    return Defaults.gridWallActionUp.value
+        case .down:  return Defaults.gridWallActionDown.value
+        case .left:  return Defaults.gridWallActionLeft.value
+        case .right: return Defaults.gridWallActionRight.value
+        }
+    }
+
+    /// Whether a wall press should FIRE the edge action vs. just beep + prime.
+    ///
+    /// Fires only when the configured `edgeAction` is not `.none`, the window is at the
+    /// wall, AND the previous recorded action on this window was the SAME `gridMove<dir>`
+    /// (a consecutive repeat — the "hit it again" gesture). Pure, so it is unit-tested
+    /// directly.
+    static func shouldFireWallAction(edgeAction: EdgeAction, atWall: Bool, lastActionWasSameMove: Bool) -> Bool {
+        guard edgeAction != .none else { return false }
+        return atWall && lastActionWasSameMove
+    }
+
+    /// The existing `WindowAction` an `EdgeAction` reuses for a given edge `direction`,
+    /// or `nil` for actions that don't map to a WindowAction (`.none`, `.minimize` —
+    /// minimize is handled by the AX minimize path, not a WindowAction).
+    ///
+    /// - `.maximize`    -> `.maximize` (fills the screen's adjusted visible frame).
+    /// - `.half`        -> the half TOWARD that edge: left -> leftHalf, right -> rightHalf,
+    ///                     up -> topHalf, down -> bottomHalf.
+    /// - `.nextDisplay` -> the adjacent display in the edge's direction. Horizontal maps
+    ///                     naturally (left -> previousDisplay, right -> nextDisplay). For
+    ///                     vertical there is no separate up/down display traversal in
+    ///                     Rectangle, so up reuses `previousDisplay` and down reuses
+    ///                     `nextDisplay` (the same adjacent-display cycle).
+    static func windowAction(for edgeAction: EdgeAction, direction: GridCalculation.Direction) -> WindowAction? {
+        switch edgeAction {
+        case .none, .minimize:
+            return nil
+        case .maximize:
+            return .maximize
+        case .half:
+            switch direction {
+            case .left:  return .leftHalf
+            case .right: return .rightHalf
+            case .up:    return .topHalf
+            case .down:  return .bottomHalf
+            }
+        case .nextDisplay:
+            switch direction {
+            case .left, .up:    return .previousDisplay
+            case .right, .down: return .nextDisplay
+            }
+        }
+    }
+}
+
+/// A configurable action fired when a `gridMove<dir>` shortcut is pressed into a wall
+/// (the window is already at the edge zone in that direction) on a consecutive repeat —
+/// the user's "if I hit the edge again, do X" behavior (M8b). One value per edge, stored
+/// via `IntEnumDefault<EdgeAction>` (`Defaults.gridWallAction<Edge>`).
+///
+/// Raw values are STABLE (persisted + exported): do not renumber once shipped.
+///
+/// Raw values START AT 1 by convention shared with every other `IntEnumDefault` enum
+/// in Rectangle (`EnhancedUI`, `TodoSidebarSide`, `TodoSidebarWidthUnit`): `0` is
+/// RESERVED as the "unset" sentinel. `IntEnumDefault.init` reads
+/// `UserDefaults.standard.integer(forKey:)`, which returns `0` for a never-set key,
+/// then does `E(rawValue: intValue) ?? defaultValue`. The `?? defaultValue` fallback
+/// only fires when `0` is NOT a valid case — so if `.none` were `0`, a fresh install
+/// would resolve to `.none` and the documented per-edge defaults
+/// (`gridWallActionUp` -> `.maximize`, `gridWallActionDown` -> `.minimize`) would
+/// silently never apply. Keeping `.none` at `1` lets the unset sentinel fall through
+/// to `defaultValue` as intended.
+enum EdgeAction: Int, Codable {
+    /// Do nothing special — just beep, as before.
+    case none = 1
+    /// Fill the screen's adjusted visible frame (reuses the `.maximize` action).
+    case maximize = 2
+    /// AX-minimize the window (reuses `AccessibilityElement.minimize()`).
+    case minimize = 3
+    /// Snap to the half toward that edge (left/right/top/bottom half).
+    case half = 4
+    /// Move to the adjacent display in that edge's direction (prev/next display).
+    case nextDisplay = 5
 }
