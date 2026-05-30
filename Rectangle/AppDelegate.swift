@@ -40,6 +40,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var additionalSizeMenuItems: [NSMenuItem] = []
     private var dynamicMenuItemCount: Int = 0
 
+    // TEMPORARY (M4): development-only grid overlay preview. The window and its
+    // auto-hide timer back the "Debug: Show Grid Overlay" menu item below.
+    // Remove this, the menu item, and `showGridOverlayDebug` when the real
+    // Layouts UI lands (M14) and the overlay is driven by actual drag/keyboard.
+    private var debugGridOverlay: GridOverlayWindow?
+    private var debugGridOverlayHideTimer: Timer?
+
     @IBOutlet weak var mainStatusMenu: NSMenu!
     @IBOutlet weak var unauthorizedMenu: NSMenu!
     @IBOutlet weak var ignoreMenuItem: NSMenuItem!
@@ -79,6 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainStatusMenu.autoenablesItems = false
         addMenuIcons()
         addWindowActionMenuItems()
+        addDebugGridOverlayMenuItem() // TEMPORARY (M4) — remove with the Layouts UI
 
         NotificationCenter.default.addObserver(self, selector: #selector(rebuildMenu), name: .showAdditionalSizesInMenuChanged, object: nil)
 
@@ -701,5 +709,66 @@ extension AppDelegate: SPUStandardUserDriverDelegate {
     func standardUserDriverWillFinishUpdateSession() {
         self.hasPendingUpdate = false
         updatesMenuItem.title = "Check for Updates…".localized(key: "HIK-3r-i7E.title")
+    }
+}
+
+// MARK: - TEMPORARY (M4) grid overlay debug trigger
+//
+// Development-only: a status-menu item that renders the active grid layout
+// overlay on the screen under the cursor so the overlay-to-screen coordinate
+// integration can be verified visually by a human. This entire extension, the
+// `debugGridOverlay*` properties, and the `addDebugGridOverlayMenuItem()` call
+// in `applicationDidFinishLaunching` are temporary and should be deleted when
+// the real Layouts UI (M14) drives the overlay from actual drag/keyboard input.
+extension AppDelegate {
+
+    /// Appends the "Debug: Show Grid Overlay" item to the main status menu.
+    fileprivate func addDebugGridOverlayMenuItem() {
+        let item = NSMenuItem(
+            title: "Debug: Show Grid Overlay",
+            action: #selector(showGridOverlayDebug),
+            keyEquivalent: ""
+        )
+        item.target = self
+        // Append at the end so it doesn't shift the dynamic-item index math.
+        mainStatusMenu.addItem(NSMenuItem.separator())
+        mainStatusMenu.addItem(item)
+    }
+
+    /// Shows the overlay on the screen under the cursor using that display's
+    /// active grid layout (falling back to a 3×2 starter when none is set),
+    /// auto-hiding after ~2.5s. Clicking again while visible toggles it off.
+    @objc fileprivate func showGridOverlayDebug() {
+        // Toggle off if already showing.
+        if debugGridOverlay != nil {
+            debugGridOverlayHideTimer?.invalidate()
+            debugGridOverlayHideTimer = nil
+            debugGridOverlay?.hide()
+            debugGridOverlay = nil
+            return
+        }
+
+        guard let screen = ScreenDetection().detectScreensAtCursor()?.currentScreen else { return }
+
+        let layout: ZoneLayout
+        if let uuid = screen.displayUUIDString,
+           let active = GridModel.instance.activeLayout(forDisplay: uuid) {
+            layout = active
+        } else {
+            layout = ZoneLayout.grid3x2()
+        }
+
+        let overlay = GridOverlayWindow()
+        // Highlight the first zone so the fill path is exercised too.
+        overlay.show(layout: layout, on: screen, highlightZone: layout.zoneIds.first)
+        debugGridOverlay = overlay
+
+        debugGridOverlayHideTimer?.invalidate()
+        debugGridOverlayHideTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            self.debugGridOverlay?.hide()
+            self.debugGridOverlay = nil
+            self.debugGridOverlayHideTimer = nil
+        }
     }
 }

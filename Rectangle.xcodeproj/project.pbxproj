@@ -73,6 +73,7 @@
 		9824702022AF9B7E0037B409 /* RectangleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824701F22AF9B7E0037B409 /* RectangleTests.swift */; };
 		B11A0000000000000000B002 /* GridLayoutModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000B001 /* GridLayoutModelTests.swift */; };
 		B11A0000000000000000C102 /* GridModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000C101 /* GridModelTests.swift */; };
+		B11A0000000000000000C302 /* GridOverlayWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000C301 /* GridOverlayWindowTests.swift */; };
 		B11A0000000000000000D002 /* GridCalculationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000D001 /* GridCalculationTests.swift */; };
 		9824702C22AFA22E0037B409 /* AccessibilityWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824702A22AFA22E0037B409 /* AccessibilityWindowController.swift */; };
 		9824702F22AFA2E50037B409 /* AccessibilityAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824702E22AFA2E50037B409 /* AccessibilityAuthorization.swift */; };
@@ -91,6 +92,7 @@
 		9824704F22B189250037B409 /* BestEffortWindowMover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824704A22B189250037B409 /* BestEffortWindowMover.swift */; };
 		9824705122B28D7A0037B409 /* LeftRightHalfCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824705022B28D7A0037B409 /* LeftRightHalfCalculation.swift */; };
 		983BBD6F253B609D000D223E /* FootprintWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 983BBD6E253B609D000D223E /* FootprintWindow.swift */; };
+		B11A0000000000000000C202 /* GridOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000C201 /* GridOverlayWindow.swift */; };
 		983DD04028A844BE00BF1EEE /* SnapAreaViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 983DD03F28A844BE00BF1EEE /* SnapAreaViewController.swift */; };
 		983DD04428B0639E00BF1EEE /* SnapAreaModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 983DD04328B0639E00BF1EEE /* SnapAreaModel.swift */; };
 		B11A0000000000000000A002 /* GridLayoutModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A0000000000000000A001 /* GridLayoutModel.swift */; };
@@ -299,6 +301,7 @@
 		9824701F22AF9B7E0037B409 /* RectangleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RectangleTests.swift; sourceTree = "<group>"; };
 		B11A0000000000000000B001 /* GridLayoutModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridLayoutModelTests.swift; sourceTree = "<group>"; };
 		B11A0000000000000000C101 /* GridModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridModelTests.swift; sourceTree = "<group>"; };
+		B11A0000000000000000C301 /* GridOverlayWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridOverlayWindowTests.swift; sourceTree = "<group>"; };
 		B11A0000000000000000D001 /* GridCalculationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridCalculationTests.swift; sourceTree = "<group>"; };
 		9824702122AF9B7E0037B409 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		9824702A22AFA22E0037B409 /* AccessibilityWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AccessibilityWindowController.swift; sourceTree = "<group>"; };
@@ -318,6 +321,7 @@
 		9824704A22B189250037B409 /* BestEffortWindowMover.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BestEffortWindowMover.swift; sourceTree = "<group>"; };
 		9824705022B28D7A0037B409 /* LeftRightHalfCalculation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeftRightHalfCalculation.swift; sourceTree = "<group>"; };
 		983BBD6E253B609D000D223E /* FootprintWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintWindow.swift; sourceTree = "<group>"; };
+		B11A0000000000000000C201 /* GridOverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridOverlayWindow.swift; sourceTree = "<group>"; };
 		983DD03F28A844BE00BF1EEE /* SnapAreaViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapAreaViewController.swift; sourceTree = "<group>"; };
 		983DD04328B0639E00BF1EEE /* SnapAreaModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapAreaModel.swift; sourceTree = "<group>"; };
 		B11A0000000000000000A001 /* GridLayoutModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridLayoutModel.swift; sourceTree = "<group>"; };
@@ -727,6 +731,7 @@
 				9824701F22AF9B7E0037B409 /* RectangleTests.swift */,
 				B11A0000000000000000B001 /* GridLayoutModelTests.swift */,
 				B11A0000000000000000C101 /* GridModelTests.swift */,
+				B11A0000000000000000C301 /* GridOverlayWindowTests.swift */,
 				B11A0000000000000000D001 /* GridCalculationTests.swift */,
 				9824702122AF9B7E0037B409 /* Info.plist */,
 			);
@@ -775,6 +780,7 @@
 			children = (
 				98C27560231FFA5F009B9292 /* SnappingManager.swift */,
 				983BBD6E253B609D000D223E /* FootprintWindow.swift */,
+				B11A0000000000000000C201 /* GridOverlayWindow.swift */,
 				983DD04328B0639E00BF1EEE /* SnapAreaModel.swift */,
 				B11A0000000000000000A001 /* GridLayoutModel.swift */,
 				B11A0000000000000000E001 /* DisplayRegistry.swift */,
@@ -1088,6 +1094,7 @@
 				9824702C22AFA22E0037B409 /* AccessibilityWindowController.swift in Sources */,
 				988D066122EB4C7C004EABD7 /* FirstThirdCalculation.swift in Sources */,
 				983BBD6F253B609D000D223E /* FootprintWindow.swift in Sources */,
+				B11A0000000000000000C202 /* GridOverlayWindow.swift in Sources */,
 				988D067F22EB4EDE004EABD7 /* MoveLeftRightCalculation.swift in Sources */,
 				AA3A9E8B29230A82004EB8E5 /* CFExtension.swift in Sources */,
 				98C6DEF023CE191700CC0C1E /* GapCalculation.swift in Sources */,
@@ -1173,6 +1180,7 @@
 				9824702022AF9B7E0037B409 /* RectangleTests.swift in Sources */,
 				B11A0000000000000000B002 /* GridLayoutModelTests.swift in Sources */,
 				B11A0000000000000000C102 /* GridModelTests.swift in Sources */,
+				B11A0000000000000000C302 /* GridOverlayWindowTests.swift in Sources */,
 				B11A0000000000000000D002 /* GridCalculationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
