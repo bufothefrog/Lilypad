@@ -178,6 +178,18 @@ struct LayoutsRootView: View {
                 modifierPicker(get: { model.spanModifierRaw }, set: { model.spanModifierRaw = $0 })
             }
 
+            sectionSubheader(NSLocalizedString("Proximity span", tableName: "Main", value: "Proximity span", comment: ""))
+            Toggle(NSLocalizedString("Span by proximity (no modifier)", tableName: "Main", value: "Span by proximity (no modifier)", comment: "Proximity span toggle"), isOn: $model.proximitySpanEnabled)
+            HStack {
+                Text(NSLocalizedString("Radius", tableName: "Main", value: "Radius", comment: "Proximity span radius"))
+                    .frame(width: 160, alignment: .leading)
+                Slider(value: $model.proximitySpanRadius, in: 10...120)
+                    .frame(width: 200)
+                Stepper("", value: $model.proximitySpanRadius, in: 10...120, step: 1).labelsHidden()
+                Text("\(Int(model.proximitySpanRadius)) px").frame(width: 50, alignment: .leading)
+            }
+            .disabled(!model.proximitySpanEnabled)
+
             settingRow(NSLocalizedString("Shortcut targets", tableName: "Main", value: "Shortcut targets", comment: "")) {
                 Picker("", selection: $model.shortcutTargetMode) {
                     ForEach(ShortcutTargetMode.allCasesOrdered, id: \.self) { mode in

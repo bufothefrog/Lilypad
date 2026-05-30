@@ -122,6 +122,17 @@ class Defaults {
     /// When enabled, the selected zone uses the system accent color instead of gridSelectedZoneColor.
     static let gridUseAccentForSelected = OptionalBoolDefault(key: "gridUseAccentForSelected")
 
+    // MARK: Proximity span (optional drag mode)
+    /// OPTIONAL (default OFF): span WITHOUT holding the span modifier by positioning
+    /// the cursor near where zones meet during a grid drag. When on, the preview /
+    /// commit spans the bounding box of every zone within `gridProximitySpanRadius`
+    /// of the cursor. The explicit span modifier still takes precedence when held.
+    static let gridProximitySpanEnabled = OptionalBoolDefault(key: "gridProximitySpanEnabled")
+    /// The point-to-rect radius (Cocoa points) used by proximity span: a zone is
+    /// included when its rect is within this distance of the cursor. Larger -> spans
+    /// more zones near a gridline / corner. Default 40.
+    static let gridProximitySpanRadius = FloatDefault(key: "gridProximitySpanRadius", defaultValue: 40)
+
     // MARK: Per-edge wall actions (M8b)
     /// What a `gridMove<dir>` shortcut does when the window is already at the wall in
     /// that direction and the user got there by a consecutive grid move ("hit it
@@ -233,6 +244,8 @@ class Defaults {
         gridSelectedZoneColor,
         gridUnselectedZoneColor,
         gridUseAccentForSelected,
+        gridProximitySpanEnabled,
+        gridProximitySpanRadius,
         gridWallActionUp,
         gridWallActionDown,
         gridWallActionLeft,

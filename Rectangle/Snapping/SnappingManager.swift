@@ -56,6 +56,16 @@ class SnappingManager {
     // the grid path, so the classic edge-snap path is unaffected.
     var gridSpanAnchorZone: Int?
 
+    // MARK: - Lilypad proximity-span state (optional drag mode, default OFF)
+    // The set of zones the proximity drag mode is currently highlighting (every
+    // zone within `gridProximitySpanRadius` of the cursor). nil ⇒ proximity is not
+    // the active sub-mode this frame. Tracked so the commit can snap to the
+    // bounding box of exactly the set that was last previewed, and so the overlay
+    // is only re-rendered when this set changes. Only ever set on the grid path
+    // when proximity is enabled AND the span modifier is NOT held; cleared by
+    // clearGridPreview so nothing carries over.
+    var currentGridProximityZones: Set<Int>?
+
     let screenDetection = ScreenDetection()
     
     private let marginTop = Defaults.snapEdgeMarginTop.cgFloat
@@ -251,6 +261,42 @@ class SnappingManager {
         return (masked & UInt(spanModifierRawValue)) == UInt(spanModifierRawValue)
     }
 
+    /// Which grid-snap commit the `.leftMouseUp` handler should perform, given the
+    /// previewed state. PURE so the precedence is unit-testable without live screen /
+    /// cursor state (the source of the proximity preview/commit-mismatch bug).
+    enum GridCommit: Equatable {
+        case anchorSpan(fromZone: Int, toZone: Int)  // span modifier held + anchor armed + a current zone.
+        case proximity(zones: Set<Int>)              // proximity mode active (non-empty tracked set).
+        case single(zone: Int)                       // the single current zone (M5).
+        case none                                    // nothing eligible to commit.
+    }
+
+    /// Decide the commit branch with this PRECEDENCE (mirrors updateGridPreview):
+    ///   (a) span modifier held + anchor armed + a current zone ⇒ anchor span.
+    ///   (b) else a non-empty proximity set ⇒ proximity span. This does NOT require
+    ///       `currentZone`: proximity deliberately highlights zones within the radius
+    ///       even when the cursor is just OUTSIDE `area` (over the menu-bar/Dock
+    ///       strip), where `zone(at:)` — and therefore `currentZone` — is nil. Gating
+    ///       on `currentZone` here would highlight a span but never commit it
+    ///       (the preview/commit mismatch this helper exists to prevent).
+    ///   (c) else a current zone ⇒ the single zone.
+    ///   (d) else nothing.
+    static func gridCommitDecision(spanEngaged: Bool,
+                                   anchorZone: Int?,
+                                   currentZone: Int?,
+                                   proximityZones: Set<Int>?) -> GridCommit {
+        if spanEngaged, let anchor = anchorZone, let zone = currentZone {
+            return .anchorSpan(fromZone: anchor, toZone: zone)
+        }
+        if let proximityZones = proximityZones, !proximityZones.isEmpty {
+            return .proximity(zones: proximityZones)
+        }
+        if let zone = currentZone {
+            return .single(zone: zone)
+        }
+        return .none
+    }
+
     /// Instance convenience reading current Defaults.
     func gridModeEngaged(_ event: NSEvent) -> Bool {
         SnappingManager.gridModeEngaged(modifierFlags: event.modifierFlags,
@@ -297,24 +343,41 @@ class SnappingManager {
             // canSnap(event) exactly like the edge path's postSnap, since Stage /
             // modifier state can change between the last dragged event and mouseUp.
             if gridModeEngaged(event) {
+                // Only the SHARED eligibility (canSnap + screen/layout/window) is
+                // guarded up front. The commit BRANCH is chosen by the pure
+                // `gridCommitDecision` (mirrors updateGridPreview's precedence): the
+                // proximity branch must NOT require currentGridZone, because proximity
+                // deliberately highlights zones within the radius even when the cursor
+                // is just OUTSIDE `area` (over the menu-bar/Dock strip), where
+                // zone(at:) — and therefore currentGridZone — is nil. Gating the whole
+                // commit on currentGridZone (as the original code did) highlighted that
+                // span but never snapped to it (preview/commit mismatch).
                 if canSnap(event),
-                   let zone = currentGridZone,
                    let screen = currentGridScreen,
                    let layout = currentGridLayout,
                    let windowElement = windowElement,
                    let windowId = windowId {
-                    // Span sub-mode (M6): when the span modifier is held and an
-                    // anchor is set, commit the selection rect from the anchor to
-                    // the current zone instead of the single zone. Otherwise commit
-                    // the single current zone exactly as M5 did.
-                    if spanEngaged(event), let anchor = gridSpanAnchorZone {
-                        commitGridSpanSnap(fromZone: anchor, toZone: zone, screen: screen, layout: layout,
+                    let decision = SnappingManager.gridCommitDecision(
+                        spanEngaged: spanEngaged(event),
+                        anchorZone: gridSpanAnchorZone,
+                        currentZone: currentGridZone,
+                        proximityZones: currentGridProximityZones)
+                    switch decision {
+                    case let .anchorSpan(fromZone, toZone):
+                        commitGridSpanSnap(fromZone: fromZone, toZone: toZone, screen: screen, layout: layout,
                                            windowElement: windowElement, windowId: windowId)
-                    } else {
+                        windowElement.bringToFront()
+                    case let .proximity(zones):
+                        commitGridProximitySnap(zones: zones, screen: screen, layout: layout,
+                                                windowElement: windowElement, windowId: windowId)
+                        windowElement.bringToFront()
+                    case let .single(zone):
                         commitGridSnap(zone: zone, screen: screen, layout: layout,
                                        windowElement: windowElement, windowId: windowId)
+                        windowElement.bringToFront()
+                    case .none:
+                        break
                     }
-                    windowElement.bringToFront()
                 }
                 clearGridPreview()
                 self.windowElement = nil
@@ -559,16 +622,37 @@ class SnappingManager {
             gridSpanAnchorZone = nil
         }
 
-        // Compute the highlighted zone set: the span (anchor..current) when span is
-        // engaged and armed, otherwise just the single current zone.
+        // Compute the highlighted zone set with this PRECEDENCE (matching the
+        // mouseUp commit):
+        //   (a) span modifier engaged + armed ⇒ EXISTING anchor span
+        //       (anchor..current). Highest precedence.
+        //   (b) else proximity enabled ⇒ every zone within the radius of the cursor
+        //       (`zonesWithinRadius`). This is the OPTIONAL proximity sub-mode.
+        //   (c) else ⇒ the single current zone (EXISTING behavior).
+        // `currentGridProximityZones` is non-nil only while (b) is the active mode,
+        // so the commit knows which set to snap to.
         let highlightZones: Set<Int>
+        let previousProximityZones = currentGridProximityZones
+        var proximityZones: Set<Int>? = nil
         if spanEngaged, let anchor = gridSpanAnchorZone, let zone = zone {
             highlightZones = GridCalculation.zonesInSpan(fromZone: anchor, toZone: zone, layout: layout)
+        } else if !spanEngaged, Defaults.gridProximitySpanEnabled.userEnabled {
+            // Proximity span: union the zones whose rect is within the radius of the
+            // cursor. zonesWithinRadius is never empty while the cursor is inside the
+            // area (the containing zone is distance 0); empty only off-area.
+            let zones = GridCalculation.zonesWithinRadius(
+                of: NSEvent.mouseLocation,
+                radius: Defaults.gridProximitySpanRadius.cgFloat,
+                in: area,
+                layout: layout)
+            proximityZones = zones
+            highlightZones = zones
         } else if let zone = zone {
             highlightZones = [zone]
         } else {
             highlightZones = []
         }
+        currentGridProximityZones = proximityZones
 
         // Only re-render when something visible changed. (These re-render checks
         // also fire on the FIRST frame — when currentGridScreen/Layout are still nil
@@ -578,12 +662,16 @@ class SnappingManager {
         let zoneChanged = currentGridZone != zone
         let renderLayoutChanged = currentGridLayout?.id != layout.id
         let anchorChanged = previousAnchor != gridSpanAnchorZone
+        // In proximity mode the highlighted SET (not the single zone under the
+        // cursor) drives the visible state, so re-render whenever that set changes —
+        // even when the zone directly under the cursor hasn't.
+        let proximityChanged = previousProximityZones != proximityZones
 
         currentGridScreen = screen
         currentGridLayout = layout
         currentGridZone = zone
 
-        if renderScreenChanged || zoneChanged || renderLayoutChanged || anchorChanged {
+        if renderScreenChanged || zoneChanged || renderLayoutChanged || anchorChanged || proximityChanged {
             if Defaults.hapticFeedbackOnSnap.userEnabled, zone != nil {
                 NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
             }
@@ -602,6 +690,7 @@ class SnappingManager {
         currentGridLayout = nil
         currentGridZone = nil
         gridSpanAnchorZone = nil
+        currentGridProximityZones = nil
     }
 
     /// Commit a grid drag-snap: compute the zone rect (with gaps) in the screen's
@@ -649,6 +738,29 @@ class SnappingManager {
             rect = GapCalculation.applyGaps(rect, dimension: .both, sharedEdges: .none, gapSize: Defaults.gapSize.value)
             guard !rect.isNull else { return }
         }
+
+        if Defaults.unsnapRestore.enabled != false,
+           AppDelegate.windowHistory.restoreRects[windowId] == nil {
+            AppDelegate.windowHistory.restoreRects[windowId] = initialWindowRect
+        }
+
+        WindowManager.instance?.applyGridRect(rect, screen: screen, windowElement: windowElement, windowId: windowId)
+    }
+
+    /// Commit a proximity-span drag-snap (optional mode): the window snaps to the
+    /// bounding box of `zones` — the set of zones the cursor was within the radius
+    /// of at mouseUp. Mirrors `commitGridSpanSnap` (gaps, restore-rect bookkeeping,
+    /// the shared WindowManager.applyGridRect path) but uses
+    /// `GridCalculation.boundingRect(ofZones:)` for the rect.
+    private func commitGridProximitySnap(zones: Set<Int>, screen: NSScreen, layout: ZoneLayout,
+                                         windowElement: AccessibilityElement, windowId: CGWindowID) {
+        let ignoreTodo = TodoManager.isTodoWindow(windowId)
+        let area = screen.adjustedVisibleFrame(ignoreTodo)
+
+        let rect = Defaults.gapSize.value > 0
+            ? GridCalculation.boundingRectWithGaps(ofZones: zones, in: area, layout: layout, gapSize: Defaults.gapSize.value)
+            : GridCalculation.boundingRect(ofZones: zones, in: area, layout: layout)
+        guard !rect.isNull else { return }
 
         if Defaults.unsnapRestore.enabled != false,
            AppDelegate.windowHistory.restoreRects[windowId] == nil {

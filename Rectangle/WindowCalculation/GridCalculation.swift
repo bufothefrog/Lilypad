@@ -212,6 +212,69 @@ enum GridCalculation {
         return result
     }
 
+    // MARK: - Proximity span (M-proximity)
+
+    /// The set of zone ids whose rect lies within `radius` (Cocoa points) of
+    /// `point`, using point-to-rect distance. Powers the OPTIONAL "span by
+    /// proximity" drag mode: position the cursor near where zones meet to span
+    /// them without holding the span modifier.
+    ///
+    /// DISTANCE METRIC (point-to-rect, the standard axis-separated distance):
+    ///   dx = max(rect.minX - p.x, 0, p.x - rect.maxX)
+    ///   dy = max(rect.minY - p.y, 0, p.y - rect.maxY)
+    ///   distance = hypot(dx, dy)
+    /// `dx`/`dy` are 0 on the axis the point already overlaps, so a point INSIDE a
+    /// rect has distance 0. A zone is included iff `distance <= radius`.
+    ///
+    /// Behavior with radius:
+    /// - deep inside one zone (small radius) -> just that zone (distance 0).
+    /// - near a single gridline -> the 2 zones across it (both within radius).
+    /// - near a 4-way corner (large enough radius) -> all 4 meeting zones.
+    /// - radius 0 -> only the zone(s) containing the point (distance exactly 0).
+    /// The zone CONTAINING the point always has distance 0, so when `point` is
+    /// inside `area` the result is never empty. A point fully outside `area`
+    /// (every zone farther than `radius`) yields an empty set.
+    ///
+    /// `point` and `area` are both in Cocoa bottom-left coords.
+    static func zonesWithinRadius(of point: CGPoint, radius: CGFloat, in area: CGRect, layout: ZoneLayout) -> Set<Int> {
+        var result: Set<Int> = []
+        let r = max(radius, 0)
+        for zoneId in layout.zoneIds {
+            let rect = zoneRect(layout: layout, zoneId: zoneId, in: area)
+            guard !rect.isNull else { continue }
+            let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+            let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+            if hypot(dx, dy) <= r {
+                result.insert(zoneId)
+            }
+        }
+        return result
+    }
+
+    /// The Cocoa-space bounding box (union) of the rects of every zone in
+    /// `zones`. Powers the proximity-span commit/preview: the window snaps to the
+    /// box enclosing all the zones the cursor was near. Unknown zone ids are
+    /// skipped; returns `.null` when `zones` is empty or all-unknown.
+    ///
+    /// `area` is in Cocoa bottom-left coords.
+    static func boundingRect(ofZones zones: Set<Int>, in area: CGRect, layout: ZoneLayout) -> CGRect {
+        var union: CGRect = .null
+        for zoneId in zones {
+            union = union.union(zoneRect(layout: layout, zoneId: zoneId, in: area))
+        }
+        return union
+    }
+
+    /// `boundingRect(ofZones:)` with Rectangle's standard gap inset applied via
+    /// `GapCalculation`, matching `zoneRectWithGaps` / `rangeRectWithGaps`. Shared
+    /// edges are `.none` (the whole span is inset on every side); `gapSize` 0 is a
+    /// no-op.
+    static func boundingRectWithGaps(ofZones zones: Set<Int>, in area: CGRect, layout: ZoneLayout, gapSize: Float) -> CGRect {
+        let rect = boundingRect(ofZones: zones, in: area, layout: layout)
+        guard !rect.isNull, gapSize > 0 else { return rect }
+        return GapCalculation.applyGaps(rect, dimension: .both, sharedEdges: .none, gapSize: gapSize)
+    }
+
     // MARK: - Neighbor graph
 
     /// The zone immediately adjacent to `zoneId` in `direction`, or `nil` at a wall.

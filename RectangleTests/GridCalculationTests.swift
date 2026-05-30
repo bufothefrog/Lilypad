@@ -409,6 +409,117 @@ class GridCalculationTests: XCTestCase {
         assertRect(union, selection, file: file, line: line)
     }
 
+    // MARK: - zonesWithinRadius / boundingRect (proximity span)
+
+    /// A uniform 2×2 over `area` (cells 800 wide × 450 tall):
+    ///   row 0 (top):    zones 0 1
+    ///   row 1 (bottom): zones 2 3
+    /// All four meet at the interior corner (x = area.midX, y = area.maxY - h).
+    private func uniform2x2() -> ZoneLayout {
+        ZoneLayout.uniform(cols: 2, rows: 2, id: "u22", name: "u22")
+    }
+
+    /// Deep inside a single zone with a small radius -> just that zone.
+    func testZonesWithinRadiusDeepInsideIsSingleZone() {
+        let layout = uniform2x2()
+        // Center of the top-left cell (zone 0): far from every gridline.
+        let cell0 = GridCalculation.cellRect(layout: layout, col: 0, row: 0, in: area)
+        let center = CGPoint(x: cell0.midX, y: cell0.midY)
+        XCTAssertEqual(GridCalculation.zonesWithinRadius(of: center, radius: 20, in: area, layout: layout), [0])
+    }
+
+    /// Radius 0 -> only the containing zone (the point's own zone, distance 0).
+    func testZonesWithinRadiusZeroRadiusIsContainingZone() {
+        let layout = uniform2x2()
+        let cell3 = GridCalculation.cellRect(layout: layout, col: 1, row: 1, in: area)
+        let p = CGPoint(x: cell3.midX, y: cell3.midY)
+        XCTAssertEqual(GridCalculation.zonesWithinRadius(of: p, radius: 0, in: area, layout: layout), [3])
+    }
+
+    /// Near a single vertical gridline (between col 0 and col 1 on the top row),
+    /// within radius -> the 2 zones across it, and NOT the far (bottom) zones.
+    func testZonesWithinRadiusNearGridlineIsTwoZones() {
+        let layout = uniform2x2()
+        // The vertical split is at x = area.minX + width/2 = area.midX.
+        // Sit just LEFT of it (in zone 0), vertically centered in the TOP row so the
+        // bottom zones are a full cell-height (450) away.
+        let topRowY = GridCalculation.cellRect(layout: layout, col: 0, row: 0, in: area).midY
+        let p = CGPoint(x: area.midX - 5, y: topRowY)
+        // Radius 20: reaches across the gridline to zone 1 (distance 5), but the
+        // bottom zones (2,3) are 225pt below -> excluded.
+        XCTAssertEqual(GridCalculation.zonesWithinRadius(of: p, radius: 20, in: area, layout: layout), [0, 1])
+    }
+
+    /// Near the 4-way corner with a large-enough radius -> all 4 zones.
+    func testZonesWithinRadiusNearCornerIsAllFour() {
+        let layout = uniform2x2()
+        // The interior corner where all four cells meet: x = area.midX,
+        // y = area.maxY - h (the row split). Sit a few points into zone 0 (up-left of
+        // the corner) so it contains 0, and is within a generous radius of 1,2,3.
+        let cornerX = area.midX
+        let cornerY = area.maxY - area.height / 2
+        let p = CGPoint(x: cornerX - 3, y: cornerY + 3)
+        XCTAssertEqual(GridCalculation.zonesWithinRadius(of: p, radius: 40, in: area, layout: layout), [0, 1, 2, 3])
+    }
+
+    /// A point OUTSIDE the area, farther than the radius from every zone -> empty.
+    func testZonesWithinRadiusOutsideAreaIsEmpty() {
+        let layout = uniform2x2()
+        // 100pt to the left of the area's left edge; radius 20 reaches nothing.
+        let p = CGPoint(x: area.minX - 100, y: area.midY)
+        XCTAssertTrue(GridCalculation.zonesWithinRadius(of: p, radius: 20, in: area, layout: layout).isEmpty)
+    }
+
+    /// A point just outside the area but WITHIN the radius of the nearest zone still
+    /// includes that zone (distance is the gap to the rect, not infinity).
+    func testZonesWithinRadiusJustOutsideButWithinRadius() {
+        let layout = uniform2x2()
+        // 10pt left of the left edge, vertically centered in the top row.
+        let topRowY = GridCalculation.cellRect(layout: layout, col: 0, row: 0, in: area).midY
+        let p = CGPoint(x: area.minX - 10, y: topRowY)
+        XCTAssertEqual(GridCalculation.zonesWithinRadius(of: p, radius: 20, in: area, layout: layout), [0])
+    }
+
+    /// boundingRect of a 2-zone set = the union of those zones' rects. Top row of
+    /// the 2×2 ({0,1}) = the full width, top half.
+    func testBoundingRectTwoZoneSet() {
+        let layout = uniform2x2()
+        let rect = GridCalculation.boundingRect(ofZones: [0, 1], in: area, layout: layout)
+        XCTAssertEqual(rect.minX, area.minX, accuracy: eps)
+        XCTAssertEqual(rect.maxX, area.maxX, accuracy: eps)   // spans both columns
+        XCTAssertEqual(rect.width, area.width, accuracy: eps)
+        XCTAssertEqual(rect.maxY, area.maxY, accuracy: eps)   // top row touches screen top
+        XCTAssertEqual(rect.height, area.height / 2, accuracy: eps)
+    }
+
+    /// boundingRect of the full 4-zone set = the whole area.
+    func testBoundingRectFourZoneSet() {
+        let layout = uniform2x2()
+        let rect = GridCalculation.boundingRect(ofZones: [0, 1, 2, 3], in: area, layout: layout)
+        assertRect(rect, area)
+    }
+
+    /// boundingRect of a single-zone set equals that zone's rect; an empty / unknown
+    /// set is null.
+    func testBoundingRectSingleAndEmpty() {
+        let layout = uniform2x2()
+        assertRect(GridCalculation.boundingRect(ofZones: [3], in: area, layout: layout),
+                   GridCalculation.zoneRect(layout: layout, zoneId: 3, in: area))
+        XCTAssertTrue(GridCalculation.boundingRect(ofZones: [], in: area, layout: layout).isNull)
+        XCTAssertTrue(GridCalculation.boundingRect(ofZones: [999], in: area, layout: layout).isNull)
+    }
+
+    /// boundingRectWithGaps insets the union like the other gap-aware helpers; gap 0
+    /// is a no-op.
+    func testBoundingRectWithGaps() {
+        let layout = uniform2x2()
+        let plain = GridCalculation.boundingRect(ofZones: [0, 1], in: area, layout: layout)
+        let gapped = GridCalculation.boundingRectWithGaps(ofZones: [0, 1], in: area, layout: layout, gapSize: 10)
+        XCTAssertLessThan(gapped.width, plain.width)
+        XCTAssertLessThan(gapped.height, plain.height)
+        assertRect(GridCalculation.boundingRectWithGaps(ofZones: [0, 1], in: area, layout: layout, gapSize: 0), plain)
+    }
+
     // MARK: - targetZone (M7 keyboard nav)
 
     /// An ALIGNED window (its rect matches a zone) moves to that zone's neighbor.

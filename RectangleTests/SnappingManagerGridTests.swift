@@ -124,4 +124,68 @@ class SnappingManagerGridTests: XCTestCase {
         XCTAssertTrue(engaged(.option, enabled: true, modifier: 0))
         XCTAssertFalse(engaged([], enabled: false, modifier: 0))
     }
+
+    // MARK: - gridCommitDecision (mouseUp commit-branch precedence)
+    //
+    // PURE decision the `.leftMouseUp` handler uses to pick the commit branch from
+    // the previewed state. The regression these guard: a proximity span highlighted
+    // over an OFF-AREA cursor (currentGridZone == nil) must still COMMIT — the
+    // original `guard let zone = currentGridZone` over-broadly gated the whole
+    // commit, so the overlay showed a span the user released on, and nothing snapped.
+
+    private func decide(spanEngaged: Bool = false,
+                        anchor: Int? = nil,
+                        current: Int? = nil,
+                        proximity: Set<Int>? = nil) -> SnappingManager.GridCommit {
+        SnappingManager.gridCommitDecision(spanEngaged: spanEngaged,
+                                           anchorZone: anchor,
+                                           currentZone: current,
+                                           proximityZones: proximity)
+    }
+
+    /// The core fix: proximity set is non-empty but the cursor is off-area so there
+    /// is NO current zone — the commit must still be the proximity branch, NOT .none.
+    /// (This is exactly the menu-bar/Dock-strip case: zone(at:) returns nil while
+    /// zonesWithinRadius still includes e.g. {0}.)
+    func testProximityCommitsEvenWithNoCurrentZone() {
+        XCTAssertEqual(decide(current: nil, proximity: [0]), .proximity(zones: [0]))
+        XCTAssertEqual(decide(current: nil, proximity: [0, 1, 2, 3]), .proximity(zones: [0, 1, 2, 3]))
+    }
+
+    /// Proximity also takes precedence over the single-zone branch when a current
+    /// zone DOES exist (cursor inside the area, proximity mode active).
+    func testProximityTakesPrecedenceOverSingleZone() {
+        XCTAssertEqual(decide(current: 4, proximity: [3, 4]), .proximity(zones: [3, 4]))
+    }
+
+    /// An empty or nil proximity set is NOT the proximity branch — fall through to
+    /// the single zone (or .none when there is none).
+    func testEmptyOrNilProximityFallsThrough() {
+        XCTAssertEqual(decide(current: 2, proximity: []), .single(zone: 2))
+        XCTAssertEqual(decide(current: 2, proximity: nil), .single(zone: 2))
+        XCTAssertEqual(decide(current: nil, proximity: []), .none)
+        XCTAssertEqual(decide(current: nil, proximity: nil), .none)
+    }
+
+    /// The explicit anchor span (span modifier held + anchor armed + a current zone)
+    /// TAKES PRECEDENCE over everything else.
+    func testAnchorSpanTakesPrecedence() {
+        XCTAssertEqual(decide(spanEngaged: true, anchor: 0, current: 4, proximity: [1, 2]),
+                       .anchorSpan(fromZone: 0, toZone: 4))
+    }
+
+    /// Span engaged but missing its other endpoint (no current zone) does NOT commit
+    /// an anchor span; with no proximity set it is .none (matching the original
+    /// behavior where currentGridZone == nil committed nothing for the span path).
+    func testSpanEngagedWithoutCurrentZoneDoesNotAnchorSpan() {
+        XCTAssertEqual(decide(spanEngaged: true, anchor: 0, current: nil, proximity: nil), .none)
+        // Span engaged but no anchor armed yet, with a current zone -> single zone.
+        XCTAssertEqual(decide(spanEngaged: true, anchor: nil, current: 3, proximity: nil), .single(zone: 3))
+    }
+
+    /// A plain single-zone drag (no span, no proximity) commits the single zone.
+    func testPlainSingleZone() {
+        XCTAssertEqual(decide(current: 5), .single(zone: 5))
+        XCTAssertEqual(decide(current: nil), .none)
+    }
 }

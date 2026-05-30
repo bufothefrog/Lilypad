@@ -130,6 +130,22 @@ class GridSettingsModel: ObservableObject {
         }
     }
 
+    /// OPTIONAL (default OFF): span by positioning the cursor near where zones meet
+    /// during a grid drag, without holding the span modifier.
+    @Published var proximitySpanEnabled: Bool {
+        didSet {
+            Defaults.gridProximitySpanEnabled.enabled = proximitySpanEnabled
+            Notification.Name.changeDefaults.post()
+        }
+    }
+    /// The point-to-rect radius (Cocoa points) used by proximity span.
+    @Published var proximitySpanRadius: Float {
+        didSet {
+            Defaults.gridProximitySpanRadius.value = proximitySpanRadius
+            Notification.Name.changeDefaults.post()
+        }
+    }
+
     /// Set while loading from Defaults so the `didSet` observers don't write the
     /// value straight back (and re-post) during initialization / refresh.
     private var loadingFromDefaults = false
@@ -159,6 +175,8 @@ class GridSettingsModel: ObservableObject {
         unselectedZoneColor = Defaults.gridUnselectedZoneColor.typedValue?.nsColor ?? GridSettingsModel.defaultUnselectedColor
         useAccentForSelected = Defaults.gridUseAccentForSelected.userEnabled
         gapSize = Defaults.gapSize.value
+        proximitySpanEnabled = Defaults.gridProximitySpanEnabled.userEnabled
+        proximitySpanRadius = Defaults.gridProximitySpanRadius.value
 
         refreshDisplays()
         // Default to the first connected display (falling back to the first
@@ -268,6 +286,8 @@ class GridSettingsModel: ObservableObject {
         unselectedZoneColor = Defaults.gridUnselectedZoneColor.typedValue?.nsColor ?? GridSettingsModel.defaultUnselectedColor
         useAccentForSelected = Defaults.gridUseAccentForSelected.userEnabled
         gapSize = Defaults.gapSize.value
+        proximitySpanEnabled = Defaults.gridProximitySpanEnabled.userEnabled
+        proximitySpanRadius = Defaults.gridProximitySpanRadius.value
         refreshDisplays()
     }
 }

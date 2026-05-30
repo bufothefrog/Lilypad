@@ -89,6 +89,8 @@ class GridLayoutModelTests: XCTestCase {
         XCTAssertTrue(keys.contains("gridSelectedZoneColor"))
         XCTAssertTrue(keys.contains("gridUnselectedZoneColor"))
         XCTAssertTrue(keys.contains("gridUseAccentForSelected"))
+        XCTAssertTrue(keys.contains("gridProximitySpanEnabled"))
+        XCTAssertTrue(keys.contains("gridProximitySpanRadius"))
         XCTAssertTrue(keys.contains("gridWallActionUp"))
         XCTAssertTrue(keys.contains("gridWallActionDown"))
         XCTAssertTrue(keys.contains("gridWallActionLeft"))
