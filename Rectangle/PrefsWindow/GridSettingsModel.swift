@@ -213,6 +213,14 @@ class GridSettingsModel: ObservableObject {
         }
     }
 
+    /// The human name of the currently-selected display (for the editor sheet
+    /// title), or an empty string if nothing is selected.
+    var selectedDisplayName: String {
+        guard let uuid = selectedDisplayUUID,
+              let choice = displays.first(where: { $0.uuid == uuid }) else { return "" }
+        return choice.name
+    }
+
     /// The display name for the picker, marking disconnected displays.
     func displayLabel(_ choice: DisplayChoice) -> String {
         choice.isConnected

@@ -97,6 +97,39 @@ class GridModel {
         Defaults.gridLayoutsByDisplay.typedValue = byDisplay
     }
 
+    /// Overwrites the GEOMETRY (boundaries + cell->zone map) of the layout with
+    /// `id` on `displayUUID`, preserving its id / name / active status. This is
+    /// the FancyZones editor's Save path (M15): the editor builds a working copy
+    /// with the pure `ZoneLayout` edit operations, then writes the result back
+    /// here. No-op if no layout with that id exists for the display.
+    func updateLayout(id: String,
+                      colBoundaries: [Double],
+                      rowBoundaries: [Double],
+                      cellZones: [Int],
+                      forDisplay displayUUID: String) {
+        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        guard var perDisplay = byDisplay[displayUUID],
+              let index = perDisplay.layouts.firstIndex(where: { $0.id == id })
+        else { return }
+        // Mutate geometry in place; id / name (and the surrounding activeLayoutId)
+        // are untouched, so the active marker and slot ordering are preserved.
+        perDisplay.layouts[index].colBoundaries = colBoundaries
+        perDisplay.layouts[index].rowBoundaries = rowBoundaries
+        perDisplay.layouts[index].cellZones = cellZones
+        byDisplay[displayUUID] = perDisplay
+        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+    }
+
+    /// Convenience overload taking an already-built `ZoneLayout` (matched by its
+    /// `id`); writes back only its geometry, preserving the stored name.
+    func updateLayout(_ layout: ZoneLayout, forDisplay displayUUID: String) {
+        updateLayout(id: layout.id,
+                     colBoundaries: layout.colBoundaries,
+                     rowBoundaries: layout.rowBoundaries,
+                     cellZones: layout.cellZones,
+                     forDisplay: displayUUID)
+    }
+
     /// Marks the layout with `id` as active on `displayUUID`. No-op if no layout
     /// with that id exists for the display.
     func setActiveLayout(id: String, forDisplay displayUUID: String) {

@@ -24,7 +24,7 @@ import Foundation
 /// zone id; cells sharing an id form a single zone, whose cells must always
 /// form a rectangle (the editor enforces this — `GridCalculation` assumes it).
 /// An identity map (`0, 1, 2, …`) means every cell is its own zone (no merges).
-struct ZoneLayout: Codable, Equatable {
+struct ZoneLayout: Codable, Equatable, Identifiable {
     var id: String
     var name: String
     var colBoundaries: [Double]

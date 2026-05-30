@@ -36,6 +36,10 @@ struct LayoutsRootView: View {
     // visible placeholder; choosing a starter fires the add and resets to `nil`.
     @State private var pendingStarter: QuickStarter? = nil
 
+    // The layout currently open in the FancyZones editor sheet (M15). `nil` =
+    // no sheet. Identifiable so `.sheet(item:)` (10.15) drives presentation.
+    @State private var editingLayout: ZoneLayout? = nil
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -46,6 +50,15 @@ struct LayoutsRootView: View {
                 gridSettingsSection
             }
             .padding(20)
+        }
+        .sheet(item: $editingLayout) { layout in
+            LayoutEditorView(
+                displayUUID: model.selectedDisplayUUID ?? "",
+                displayName: model.selectedDisplayName,
+                layout: layout,
+                onSaved: { model.reloadLayouts() },
+                onClose: { editingLayout = nil }
+            )
         }
     }
 
@@ -153,9 +166,10 @@ struct LayoutsRootView: View {
             }
             .disabled(isActive)
 
-            // Placeholder for the M15 FancyZones canvas editor.
-            Button(NSLocalizedString("Edit…", tableName: "Main", value: "Edit…", comment: "")) {}
-                .disabled(true)
+            // M15 FancyZones canvas editor — opens the sheet on the working copy.
+            Button(NSLocalizedString("Edit…", tableName: "Main", value: "Edit…", comment: "")) {
+                editingLayout = layout
+            }
 
             Button(NSLocalizedString("Remove", tableName: "Main", value: "Remove", comment: "")) {
                 model.removeLayout(id: layout.id)
