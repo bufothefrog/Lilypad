@@ -139,23 +139,21 @@ class GridModelTests: XCTestCase {
         XCTAssertEqual(Set(seeded), Set([uuidA, uuidB]))
 
         let a = model.layouts(forDisplay: uuidA)
-        XCTAssertEqual(a.layouts.count, 2)
-        // 2×2 is active, with 3×2 as the second starter.
+        XCTAssertEqual(a.layouts.count, 1)
+        // A single 2×2 starter, active.
         XCTAssertEqual(a.layouts[0].cols, 2)
         XCTAssertEqual(a.layouts[0].rows, 2)
-        XCTAssertEqual(a.layouts[1].cols, 3)
-        XCTAssertEqual(a.layouts[1].rows, 2)
         XCTAssertEqual(a.activeLayoutId, a.layouts[0].id)
         XCTAssertEqual(a.activeLayout?.id, a.layouts[0].id)
 
         // The second display is fully seeded too (not just present in `seeded`).
         let b = model.layouts(forDisplay: uuidB)
-        XCTAssertEqual(b.layouts.count, 2)
+        XCTAssertEqual(b.layouts.count, 1)
         XCTAssertEqual(b.activeLayoutId, b.layouts[0].id)
         // Per-display isolation: ids don't collide across displays, and changing
         // one display's active layout doesn't disturb the other.
         XCTAssertTrue(Set(a.layouts.map { $0.id }).isDisjoint(with: Set(b.layouts.map { $0.id })))
-        model.setActiveLayout(id: b.layouts[1].id, forDisplay: uuidB)
+        model.setActiveLayout(id: b.layouts[0].id, forDisplay: uuidB)
         XCTAssertEqual(model.layouts(forDisplay: uuidA).activeLayoutId, a.layouts[0].id)
     }
 
@@ -180,19 +178,19 @@ class GridModelTests: XCTestCase {
         // uuidA is untouched (still just the custom layout).
         XCTAssertEqual(model.layouts(forDisplay: uuidA).layouts.map { $0.id }, ["custom"])
         // uuidB got the starter set.
-        XCTAssertEqual(model.layouts(forDisplay: uuidB).layouts.count, 2)
+        XCTAssertEqual(model.layouts(forDisplay: uuidB).layouts.count, 1)
     }
 
     func testEnsureActiveLayoutSeedsWhenEmptyThenReturnsExisting() {
         // First call on an unseeded display lazily seeds it and returns the active layout.
         let first = model.ensureActiveLayout(forDisplay: uuidA)
         XCTAssertNotNil(first)
-        XCTAssertEqual(model.layouts(forDisplay: uuidA).layouts.count, 2)
+        XCTAssertEqual(model.layouts(forDisplay: uuidA).layouts.count, 1)
         XCTAssertEqual(model.layouts(forDisplay: uuidA).activeLayoutId, first?.id)
 
         // Second call returns the same active layout without re-seeding (no duplicate layouts).
         let second = model.ensureActiveLayout(forDisplay: uuidA)
         XCTAssertEqual(second?.id, first?.id)
-        XCTAssertEqual(model.layouts(forDisplay: uuidA).layouts.count, 2)
+        XCTAssertEqual(model.layouts(forDisplay: uuidA).layouts.count, 1)
     }
 }

@@ -169,13 +169,15 @@ class GridModel {
         return seeded
     }
 
-    /// The default starter set for a freshly-seeded display: a 2×2 grid (active)
-    /// plus a 3×2 grid, built with the M2 quick-starter generators.
+    /// The default starter set for a freshly-seeded display: a single 2×2 grid
+    /// (active), built with the M2 quick-starter generators. Kept to ONE starter
+    /// so a fresh monitor has a working drag-snap layout out of the box without
+    /// pre-populating the list with extras the user didn't choose — they add the
+    /// rest themselves via the Layouts pane.
     static func starterLayouts() -> PerDisplayLayouts {
-        // Fresh unique ids per seeded display (the human label stays in `name`),
-        // so ids are safe for the add/rename/remove UI in later milestones.
+        // Fresh unique id per seeded display (the human label stays in `name`),
+        // so the id is safe for the add/rename/remove UI.
         let grid2x2 = ZoneLayout.grid2x2(id: UUID().uuidString)
-        let grid3x2 = ZoneLayout.grid3x2(id: UUID().uuidString)
-        return PerDisplayLayouts(layouts: [grid2x2, grid3x2], activeLayoutId: grid2x2.id)
+        return PerDisplayLayouts(layouts: [grid2x2], activeLayoutId: grid2x2.id)
     }
 }
