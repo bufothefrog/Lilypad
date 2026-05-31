@@ -107,13 +107,7 @@ class PrefsViewController: NSViewController {
             .lastFourth: lastFourthShortcutView,
             .firstThreeFourths: firstThreeFourthsShortcutView,
             .centerThreeFourths: centerThreeFourthsShortcutView,
-            .lastThreeFourths: lastThreeFourthsShortcutView,
-            .topLeftSixth: topLeftSixthShortcutView,
-            .topCenterSixth: topCenterSixthShortcutView,
-            .topRightSixth: topRightSixthShortcutView,
-            .bottomLeftSixth: bottomLeftSixthShortcutView,
-            .bottomCenterSixth: bottomCenterSixthShortcutView,
-            .bottomRightSixth: bottomRightSixthShortcutView
+            .lastThreeFourths: lastThreeFourthsShortcutView
         ]
         
         for (action, view) in actionsToViews {
