@@ -133,6 +133,9 @@ struct LayoutEditorView: View {
     /// Size of one small ratio number field.
     private let ratioFieldWidth: CGFloat = 44
     private let ratioFieldHeight: CGFloat = 20
+    /// Margin reserved on the canvas's RIGHT and BOTTOM for the "+" add-track
+    /// buttons (right-center = add a column, bottom-center = add a row).
+    private let addGutter: CGFloat = 30
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -159,8 +162,10 @@ struct LayoutEditorView: View {
         // space as the canvas (offset by the gutters) so they line up with the
         // actual track centers — even non-uniform ones — and re-align live.
         GeometryReader { geo in
-            let canvasArea = CGSize(width: max(geo.size.width - rowFieldGutter, 1),
-                                    height: max(geo.size.height - colFieldGutter, 1))
+            // Reserve the top/left gutters for the ratio fields and a right/bottom
+            // margin for the "+" add-track buttons, then fit the monitor aspect in.
+            let canvasArea = CGSize(width: max(geo.size.width - rowFieldGutter - addGutter, 1),
+                                    height: max(geo.size.height - colFieldGutter - addGutter, 1))
             let fitted = LayoutEditorView.fittedRect(aspect: pixelSize, in: canvasArea)
             // The canvas origin in the GeometryReader's space (shifted past the gutters).
             let canvasOriginX = rowFieldGutter + fitted.minX
@@ -177,9 +182,30 @@ struct LayoutEditorView: View {
                 canvasBody(canvas: CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height))
                     .frame(width: canvas.width, height: canvas.height)
                     .offset(x: canvas.minX, y: canvas.minY)
+                // Persistent "+" add-track buttons in the reserved right/bottom
+                // margins, clear of the top/left ratio-number gutters: right-center
+                // adds a column, bottom-center adds a row.
+                addTrackButton(NSLocalizedString("Add a column", tableName: "Main", value: "Add a column", comment: "Add column button tooltip")) { addColumn() }
+                    .position(x: canvas.maxX + addGutter / 2, y: canvas.midY)
+                addTrackButton(NSLocalizedString("Add a row", tableName: "Main", value: "Add a row", comment: "Add row button tooltip")) { addRow() }
+                    .position(x: canvas.midX, y: canvas.maxY + addGutter / 2)
             }
         }
         .frame(minHeight: 280)
+    }
+
+    /// A persistent circular "+" add-track button, placed in the reserved canvas
+    /// margins (right-center adds a column, bottom-center adds a row).
+    private func addTrackButton(_ help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("+")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Color.accentColor))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(help)
     }
 
     // MARK: - Per-track ratio fields
@@ -367,10 +393,11 @@ struct LayoutEditorView: View {
     private var dividersSection: some View {
         editorGroupBox(NSLocalizedString("Dividers", tableName: "Main", value: "Dividers", comment: "Dividers section header")) {
             HStack(spacing: 8) {
-                Button(NSLocalizedString("Add Column", tableName: "Main", value: "Add Column", comment: "")) { addColumn() }
-                Button(NSLocalizedString("Add Row", tableName: "Main", value: "Add Row", comment: "")) { addRow() }
                 Button(NSLocalizedString("Remove Divider", tableName: "Main", value: "Remove Divider", comment: "")) { removeSelectedDivider() }
                     .disabled(selectedDivider == nil)
+                Text(NSLocalizedString("Use + at the right / bottom of the canvas to add columns / rows.", tableName: "Main", value: "Use + at the right / bottom of the canvas to add columns / rows.", comment: "Add-track hint"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 Spacer()
             }
         }
