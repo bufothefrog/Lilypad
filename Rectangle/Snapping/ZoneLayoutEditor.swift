@@ -531,6 +531,45 @@ extension ZoneLayout {
         Self.ratioString(from: currentRowRatios)
     }
 
+    // MARK: - Reassemble a freeform axis into a clean ratio (type-to-reassemble)
+
+    /// Convert a FREEFORM column split into a clean integer ratio by ANCHORING the
+    /// track at `index` to the integer `value` and scaling EVERY other track's
+    /// current proportion by the same factor, then rounding each to the nearest
+    /// integer (min 1). Built on `settingColumnRatios` (same count -> reposition
+    /// only, merges preserved).
+    ///
+    /// Example: current proportions ~`[1, 1.4, 0.6]`, `value = 2` at `index = 0`
+    /// -> factor = 2 / 1 = 2 -> `[2, 2.8, 1.2]` -> rounds to `[2, 3, 1]` => "2:3:1".
+    ///
+    /// Returns `nil` for an out-of-range index, a non-positive `p[index]`, a
+    /// non-positive / non-finite `value`, or any result that wouldn't be valid.
+    func reassemblingColumns(atIndex index: Int, to value: Double) -> ZoneLayout? {
+        guard let newRatios = Self.reassembledRatios(from: currentColumnRatios, atIndex: index, to: value) else { return nil }
+        return settingColumnRatios(newRatios)
+    }
+
+    /// The row-axis twin of `reassemblingColumns(atIndex:to:)`. Rows are measured
+    /// from the TOP; anchors row `index` at `value` and scales the other rows'
+    /// current proportions to rounded integers. Returns `nil` on the same
+    /// conditions.
+    func reassemblingRows(atIndex index: Int, to value: Double) -> ZoneLayout? {
+        guard let newRatios = Self.reassembledRatios(from: currentRowRatios, atIndex: index, to: value) else { return nil }
+        return settingRowRatios(newRatios)
+    }
+
+    /// Shared math for `reassemblingColumns` / `reassemblingRows`: scale `p` so the
+    /// track at `index` becomes `value`, rounding every track to a positive integer
+    /// (min 1). Returns `nil` for an out-of-range index, a non-positive `p[index]`,
+    /// or a non-positive / non-finite `value`.
+    private static func reassembledRatios(from p: [Double], atIndex index: Int, to value: Double) -> [Double]? {
+        guard index >= 0, index < p.count else { return nil }
+        guard p[index] > 0 else { return nil }
+        guard value.isFinite, value > 0 else { return nil }
+        let factor = value / p[index]
+        return p.map { max(1, ($0 * factor).rounded()) }
+    }
+
     // MARK: - Ratio helpers
 
     /// The consecutive differences of an ascending boundary array (the per-track
@@ -552,16 +591,19 @@ extension ZoneLayout {
         return Array(0..<(c * r))
     }
 
-    /// Render proportions as a colon-separated ratio of small integers, e.g.
-    /// `[0.25, 0.5, 0.25]` -> `"1:2:1"`. Tries successive denominators (up to a
-    /// modest cap) and, if every part rounds cleanly to an integer at that
-    /// denominator, reduces by the gcd. Falls back to a one-decimal proportional
-    /// readout (each part divided by the smallest part) when no small-integer
-    /// ratio fits.
-    static func ratioString(from proportions: [Double]) -> String {
-        guard !proportions.isEmpty else { return "" }
+    /// The reduced small-integer ratio for `proportions`, or `nil` when no clean
+    /// small-integer ratio fits (a FREEFORM split). Tries successive denominators
+    /// (1...48) and, if every normalized part rounds cleanly to a positive integer
+    /// at that denominator (within a 1% tolerance), reduces the result by its gcd.
+    /// `[0.25, 0.5, 0.25]` -> `[1, 2, 1]`; an irrational-ish split -> `nil`.
+    ///
+    /// This is the SINGLE implementation of the clean-ratio search; `ratioString`
+    /// and the editor's freeform detection both call it so there is one source of
+    /// truth for "is this a clean ratio, and what is it?".
+    static func cleanIntegerRatio(from proportions: [Double]) -> [Int]? {
+        guard !proportions.isEmpty else { return nil }
         let total = proportions.reduce(0, +)
-        guard total > 0 else { return "" }
+        guard total > 0 else { return nil }
         let normalized = proportions.map { $0 / total }
 
         let tolerance = 0.01
@@ -579,13 +621,28 @@ extension ZoneLayout {
             }
             if clean {
                 let divisor = ints.reduce(0) { gcd($0, $1) }
-                let reduced = divisor > 1 ? ints.map { $0 / divisor } : ints
-                return reduced.map { String($0) }.joined(separator: ":")
+                return divisor > 1 ? ints.map { $0 / divisor } : ints
             }
+        }
+        return nil
+    }
+
+    /// Render proportions as a colon-separated ratio of small integers, e.g.
+    /// `[0.25, 0.5, 0.25]` -> `"1:2:1"`. Uses `cleanIntegerRatio` for the
+    /// small-integer search; falls back to a one-decimal proportional readout
+    /// (each part divided by the smallest part) when no small-integer ratio fits.
+    static func ratioString(from proportions: [Double]) -> String {
+        guard !proportions.isEmpty else { return "" }
+        let total = proportions.reduce(0, +)
+        guard total > 0 else { return "" }
+
+        if let ints = cleanIntegerRatio(from: proportions) {
+            return ints.map { String($0) }.joined(separator: ":")
         }
 
         // No clean small-integer ratio — show proportional decimals relative to
         // the smallest part (still a usable, re-typable ratio).
+        let normalized = proportions.map { $0 / total }
         let smallest = normalized.min() ?? 1
         let scaled = normalized.map { smallest > 0 ? $0 / smallest : $0 }
         return scaled.map { String(format: "%.2g", $0) }.joined(separator: ":")

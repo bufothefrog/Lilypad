@@ -717,6 +717,125 @@ class ZoneLayoutRatioTests: XCTestCase {
         XCTAssertEqual(result.currentColumnRatioString, "1:12:1:1")
     }
 
+    // MARK: cleanIntegerRatio (freeform detection)
+
+    func testCleanIntegerRatioReducesCleanSplit() {
+        // 25/50/25 -> reduced [1, 2, 1].
+        XCTAssertEqual(ZoneLayout.cleanIntegerRatio(from: [0.25, 0.5, 0.25])!, [1, 2, 1])
+        // 2/7, 3/7, 2/7 -> [2, 3, 2].
+        XCTAssertEqual(ZoneLayout.cleanIntegerRatio(from: [2.0 / 7, 3.0 / 7, 2.0 / 7])!, [2, 3, 2])
+        // Even thirds -> [1, 1, 1].
+        XCTAssertEqual(ZoneLayout.cleanIntegerRatio(from: [1.0 / 3, 1.0 / 3, 1.0 / 3])!, [1, 1, 1])
+        // Non-normalized input is normalized first: [1, 2, 1] -> [1, 2, 1].
+        XCTAssertEqual(ZoneLayout.cleanIntegerRatio(from: [1, 2, 1])!, [1, 2, 1])
+    }
+
+    func testCleanIntegerRatioNilForFreeformSplit() {
+        // A split with no clean small-integer ratio (denom up to 48, 1% tol) -> nil.
+        XCTAssertNil(ZoneLayout.cleanIntegerRatio(from: [0.37, 0.4, 0.23]))
+    }
+
+    func testCleanIntegerRatioEmptyAndZeroTotal() {
+        XCTAssertNil(ZoneLayout.cleanIntegerRatio(from: []))
+        XCTAssertNil(ZoneLayout.cleanIntegerRatio(from: [0, 0]))
+    }
+
+    func testRatioStringMatchesCleanIntegerRatio() {
+        // ratioString and cleanIntegerRatio must agree for a clean split (single
+        // source of truth after the refactor).
+        let p = [0.25, 0.5, 0.25]
+        let ints = ZoneLayout.cleanIntegerRatio(from: p)!
+        XCTAssertEqual(ZoneLayout.ratioString(from: p), ints.map { String($0) }.joined(separator: ":"))
+        XCTAssertEqual(ZoneLayout.ratioString(from: p), "1:2:1")
+    }
+
+    // MARK: reassemblingColumns / reassemblingRows (type-to-reassemble from freeform)
+
+    func testReassemblingColumnsProducesCleanRatio() {
+        // Proportions ~1:1.45:0.62 (a FREEFORM split — no clean small-int ratio);
+        // type 2 into track 0 -> factor 2 -> [2, 2.9, 1.24] -> rounds to [2, 3, 1]
+        // => "2:3:1" (the spec's 2:3:1 reassembly example).
+        let p: [Double] = [1, 1.45, 0.62]
+        let base = ZoneLayout(
+            id: "x", name: "x",
+            colBoundaries: ZoneLayout.cumulativeBoundaries(fromRatios: p)!,
+            rowBoundaries: [0, 1],
+            cellZones: [0, 1, 2]
+        )
+        // Precondition: that split is freeform.
+        XCTAssertNil(ZoneLayout.cleanIntegerRatio(from: base.currentColumnRatios), "fixture should be freeform")
+        // Sanity-check the per-track proportions sum to 1 (gaps of cumulative boundaries).
+        XCTAssertEqual(base.currentColumnRatios.reduce(0, +), 1.0, accuracy: eps)
+
+        let result = base.reassemblingColumns(atIndex: 0, to: 2)!
+        assertValid(result)
+        XCTAssertEqual(result.cols, 3)  // track count unchanged
+        XCTAssertEqual(result.currentColumnRatioString, "2:3:1")
+    }
+
+    func testReassemblingRowsProducesCleanRatio() {
+        // Symmetric row case (rows from the top): ~1:1.45:0.62, type 2 in row 0.
+        let p: [Double] = [1, 1.45, 0.62]
+        let base = ZoneLayout(
+            id: "x", name: "x",
+            colBoundaries: [0, 1],
+            rowBoundaries: ZoneLayout.cumulativeBoundaries(fromRatios: p)!,
+            cellZones: [0, 1, 2]
+        )
+        XCTAssertNil(ZoneLayout.cleanIntegerRatio(from: base.currentRowRatios), "fixture should be freeform")
+        let result = base.reassemblingRows(atIndex: 0, to: 2)!
+        assertValid(result)
+        XCTAssertEqual(result.rows, 3)
+        XCTAssertEqual(result.currentRowRatioString, "2:3:1")
+    }
+
+    func testReassemblingKeepsMerges() {
+        // reassembling uses the same-count settingColumnRatios path, so merges on a
+        // freeform column axis survive. Start from merged3x2 retuned to a freeform
+        // column split, then reassemble — the top merge (zone 0) must persist.
+        let freeform = merged3x2().settingColumnRatios([1, 1.45, 0.62])!
+        XCTAssertNil(ZoneLayout.cleanIntegerRatio(from: freeform.currentColumnRatios), "should be freeform")
+        XCTAssertTrue(freeform.canMerge([0]))
+        let result = freeform.reassemblingColumns(atIndex: 0, to: 2)!
+        assertValid(result)
+        XCTAssertEqual(result.cellZones, merged3x2().cellZones)  // merge untouched
+        XCTAssertTrue(result.canMerge([0]))
+        XCTAssertEqual(result.currentColumnRatioString, "2:3:1")
+    }
+
+    func testReassemblingRejectsBadInput() {
+        let base = ZoneLayout(
+            id: "x", name: "x",
+            colBoundaries: ZoneLayout.cumulativeBoundaries(fromRatios: [1, 1.45, 0.62])!,
+            rowBoundaries: [0, 1],
+            cellZones: [0, 1, 2]
+        )
+        XCTAssertNil(base.reassemblingColumns(atIndex: -1, to: 2))
+        XCTAssertNil(base.reassemblingColumns(atIndex: 3, to: 2))   // 3 cols -> valid 0..2
+        XCTAssertNil(base.reassemblingColumns(atIndex: 0, to: 0))
+        XCTAssertNil(base.reassemblingColumns(atIndex: 0, to: -1))
+        XCTAssertNil(base.reassemblingColumns(atIndex: 0, to: .nan))
+        XCTAssertNil(base.reassemblingColumns(atIndex: 0, to: .infinity))
+        XCTAssertNil(base.reassemblingRows(atIndex: 1, to: 2))      // 1 row -> valid 0..0
+    }
+
+    func testReassemblingAnchorsTypedTrackExactly() {
+        // The typed track lands at the integer N (anchored); the others scale.
+        // ~1:0.51 is a FREEFORM 2-track split; type 4 into track 0 -> factor 4 ->
+        // [4, 2.04] -> rounds to [4, 2] -> reduced "2:1".
+        let base = ZoneLayout(
+            id: "x", name: "x",
+            colBoundaries: ZoneLayout.cumulativeBoundaries(fromRatios: [1, 0.51])!,
+            rowBoundaries: [0, 1],
+            cellZones: [0, 1]
+        )
+        XCTAssertNil(ZoneLayout.cleanIntegerRatio(from: base.currentColumnRatios), "fixture should be freeform")
+        let result = base.reassemblingColumns(atIndex: 0, to: 4)!
+        assertValid(result)
+        // [4, 2.04] rounds to [4, 2] -> reduced 2:1.
+        XCTAssertEqual(result.currentColumnRatioString, "2:1")
+    }
+
     // MARK: invariants hold for an end-to-end ratio edit on a merged grid
 
     func testRatioEditPreservesInvariantsAcrossAxes() {

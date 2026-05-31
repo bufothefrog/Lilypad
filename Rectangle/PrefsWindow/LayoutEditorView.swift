@@ -76,6 +76,13 @@ struct LayoutEditorView: View {
     /// a neutral note. Errors use the system warning tint; otherwise secondary.
     @State private var feedbackIsError: Bool = false
 
+    /// True while the pointer is over the TOP gutter — shows the per-column "+"
+    /// affordances that insert a new column divider at a column's midpoint.
+    @State private var hoveringColumnAdd: Bool = false
+    /// True while the pointer is over the LEFT gutter — shows the per-row "+"
+    /// affordances that insert a new row divider at a row's midpoint.
+    @State private var hoveringRowAdd: Bool = false
+
     /// The selected monitor's pixel size (point size × backing scale), resolved
     /// once at init from the connected `NSScreen` if available.
     private let pixelSize: CGSize
@@ -173,6 +180,9 @@ struct LayoutEditorView: View {
                 columnRatioFields(canvas: canvas)
                 // Per-row ratio fields, centered beside each row track.
                 rowRatioFields(canvas: canvas)
+                // Hover-to-insert affordances over the top + left gutters.
+                columnAddAffordances(canvas: canvas)
+                rowAddAffordances(canvas: canvas)
                 // The canvas itself.
                 canvasBody(canvas: CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height))
                     .frame(width: canvas.width, height: canvas.height)
@@ -180,6 +190,72 @@ struct LayoutEditorView: View {
             }
         }
         .frame(minHeight: 280)
+    }
+
+    // MARK: - Hover-to-insert add affordances
+
+    /// The TOP-gutter hover zone (spanning the canvas width) plus a "+" centered
+    /// over EACH column track; the +'s appear only while hovering. Clicking the +
+    /// for column `k` inserts a new column divider at that column's MIDPOINT,
+    /// splitting it in two. Positioned in the SAME coordinate space as the
+    /// per-column ratio fields (track midpoint × canvas width), so the +'s line up
+    /// with the tracks.
+    @ViewBuilder
+    private func columnAddAffordances(canvas: CGRect) -> some View {
+        // A transparent strip over the top gutter (above the canvas, across its
+        // width) drives the hover flag.
+        Rectangle()
+            .fill(Color.clear)
+            .contentShape(Rectangle())
+            .frame(width: canvas.width, height: colFieldGutter)
+            .position(x: canvas.midX, y: colFieldGutter / 2)
+            .onHover { hoveringColumnAdd = $0 }
+        if hoveringColumnAdd {
+            ForEach(0..<working.cols, id: \.self) { k in
+                let mid = (working.colBoundaries[k] + working.colBoundaries[k + 1]) / 2
+                let x = canvas.minX + CGFloat(mid) * canvas.width
+                addButton { insertColumn(splittingTrack: k) }
+                    .position(x: x, y: colFieldGutter / 2)
+                    .onHover { hoveringColumnAdd = hoveringColumnAdd || $0 }
+            }
+        }
+    }
+
+    /// The LEFT-gutter hover zone (spanning the canvas height) plus a "+" centered
+    /// beside EACH row track; the +'s appear only while hovering. Clicking row
+    /// `k`'s + inserts a row divider at that row's MIDPOINT. Row 0 is the TOP row
+    /// and `rowBoundaries` are from the top, so the y is the midpoint fraction ×
+    /// canvas height (NO flip) — matching `rowRatioFields` / `rowHandle`.
+    @ViewBuilder
+    private func rowAddAffordances(canvas: CGRect) -> some View {
+        Rectangle()
+            .fill(Color.clear)
+            .contentShape(Rectangle())
+            .frame(width: rowFieldGutter, height: canvas.height)
+            .position(x: rowFieldGutter / 2, y: canvas.midY)
+            .onHover { hoveringRowAdd = $0 }
+        if hoveringRowAdd {
+            ForEach(0..<working.rows, id: \.self) { k in
+                let mid = (working.rowBoundaries[k] + working.rowBoundaries[k + 1]) / 2
+                let y = canvas.minY + CGFloat(mid) * canvas.height
+                addButton { insertRow(splittingTrack: k) }
+                    .position(x: rowFieldGutter / 2, y: y)
+                    .onHover { hoveringRowAdd = hoveringRowAdd || $0 }
+            }
+        }
+    }
+
+    /// A small circular "+" button used by the hover-insert affordances.
+    private func addButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("+")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Color.accentColor))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(NSLocalizedString("Add a divider here", tableName: "Main", value: "Add a divider here", comment: "Hover-insert add button tooltip"))
     }
 
     // MARK: - Per-track ratio fields
@@ -191,11 +267,15 @@ struct LayoutEditorView: View {
     /// fields re-align whenever a divider drag changes the boundaries.
     @ViewBuilder
     private func columnRatioFields(canvas: CGRect) -> some View {
+        // A FREEFORM axis (no clean small-integer ratio) shows greyed dash
+        // placeholders instead of editable numbers — an obvious "ratios not in
+        // use" state. A clean axis shows the editable small integers.
+        let freeform = ZoneLayout.cleanIntegerRatio(from: working.currentColumnRatios) == nil
         let ratios = trackIntegerRatios(working.currentColumnRatios)
         ForEach(0..<working.cols, id: \.self) { i in
             let mid = (working.colBoundaries[i] + working.colBoundaries[i + 1]) / 2
             let x = canvas.minX + CGFloat(mid) * canvas.width
-            TrackRatioField(value: ratios[i], onCommit: { applyColumnRatio(atIndex: i, $0) })
+            TrackRatioField(value: ratios[i], isFreeform: freeform, onApply: { applyColumnRatio(atIndex: i, $0) })
                 .frame(width: ratioFieldWidth, height: ratioFieldHeight)
                 .position(x: x, y: colFieldGutter / 2)
         }
@@ -207,11 +287,12 @@ struct LayoutEditorView: View {
     /// canvas height (no flip), matching the canvas's own row layout.
     @ViewBuilder
     private func rowRatioFields(canvas: CGRect) -> some View {
+        let freeform = ZoneLayout.cleanIntegerRatio(from: working.currentRowRatios) == nil
         let ratios = trackIntegerRatios(working.currentRowRatios)
         ForEach(0..<working.rows, id: \.self) { i in
             let mid = (working.rowBoundaries[i] + working.rowBoundaries[i + 1]) / 2
             let y = canvas.minY + CGFloat(mid) * canvas.height
-            TrackRatioField(value: ratios[i], onCommit: { applyRowRatio(atIndex: i, $0) })
+            TrackRatioField(value: ratios[i], isFreeform: freeform, onApply: { applyRowRatio(atIndex: i, $0) })
                 .frame(width: ratioFieldWidth, height: ratioFieldHeight)
                 .position(x: rowFieldGutter / 2, y: y)
         }
@@ -362,10 +443,11 @@ struct LayoutEditorView: View {
     private var dividersSection: some View {
         editorGroupBox(NSLocalizedString("Dividers", tableName: "Main", value: "Dividers", comment: "Dividers section header")) {
             HStack(spacing: 8) {
-                Button(NSLocalizedString("Add Column", tableName: "Main", value: "Add Column", comment: "")) { addColumn() }
-                Button(NSLocalizedString("Add Row", tableName: "Main", value: "Add Row", comment: "")) { addRow() }
                 Button(NSLocalizedString("Remove Divider", tableName: "Main", value: "Remove Divider", comment: "")) { removeSelectedDivider() }
                     .disabled(selectedDivider == nil)
+                Text(NSLocalizedString("Hover an edge of the canvas to add a divider.", tableName: "Main", value: "Hover an edge of the canvas to add a divider.", comment: "Hover-to-insert hint"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 Spacer()
             }
         }
@@ -496,44 +578,59 @@ struct LayoutEditorView: View {
             showError(invalidNumberMessage)
             return
         }
-        let base = displayRatios(working.currentColumnRatios)
-        guard index >= 0, index < base.count else { return }
-        var ratios = base
-        ratios[index] = value
-        guard let next = working.settingColumnRatios(ratios) else {
+        let next: ZoneLayout?
+        if ZoneLayout.cleanIntegerRatio(from: working.currentColumnRatios) == nil {
+            // FREEFORM axis: one typed number rebuilds a clean ratio by anchoring
+            // this track at the value and rounding the others' proportions.
+            next = working.reassemblingColumns(atIndex: index, to: value)
+        } else {
+            // CLEAN axis: the existing per-track behavior — the displayed clean
+            // integers with this index replaced, re-applied (same count -> merges
+            // preserved). Typing 3 into the first of 1:2:1 gives 3:2:1.
+            let base = displayRatios(working.currentColumnRatios)
+            guard index >= 0, index < base.count else { return }
+            var ratios = base
+            ratios[index] = value
+            next = working.settingColumnRatios(ratios)
+        }
+        guard let result = next else {
             showError(NSLocalizedString("Couldn\u{2019}t apply that column size.", tableName: "Main", value: "Couldn\u{2019}t apply that column size.", comment: "Per-track ratio apply failed"))
             return
         }
         clearFeedback()
-        // Defer the working-copy swap to the next runloop tick. This commit fires
-        // from a TextField's onCommit (Return); replacing `working` synchronously
-        // re-creates the field (its `.id(value)` changes as the normalized ratio
-        // updates, e.g. "2" -> "1") WHILE it is still the first responder, which
-        // thrashes AppKit's end-editing cycle into a 100%-CPU render loop. Letting
-        // the field finish resigning first responder before its identity changes
-        // breaks the loop.
-        DispatchQueue.main.async { working = next }
+        // Defer the working-copy swap to the next runloop tick. This applies while
+        // the field is focused (live apply); deferring the `working` swap keeps the
+        // external value/recreation out of the same synchronous turn as the edit,
+        // a belt-and-suspenders guard against the prior 100%-CPU render loop (the
+        // field's own focus-gated re-seed is the primary fix).
+        DispatchQueue.main.async { working = result }
     }
 
-    /// Commit a typed number into the ROW ratio field at `index`. Same contract as
-    /// `applyColumnRatio`, on the row axis.
+    /// Apply a typed number into the ROW ratio field at `index`. Same contract as
+    /// `applyColumnRatio`, on the row axis (clean -> per-track replace; freeform ->
+    /// reassemble).
     private func applyRowRatio(atIndex index: Int, _ string: String) {
         guard let value = parsePositiveNumber(string) else {
             showError(invalidNumberMessage)
             return
         }
-        let base = displayRatios(working.currentRowRatios)
-        guard index >= 0, index < base.count else { return }
-        var ratios = base
-        ratios[index] = value
-        guard let next = working.settingRowRatios(ratios) else {
+        let next: ZoneLayout?
+        if ZoneLayout.cleanIntegerRatio(from: working.currentRowRatios) == nil {
+            next = working.reassemblingRows(atIndex: index, to: value)
+        } else {
+            let base = displayRatios(working.currentRowRatios)
+            guard index >= 0, index < base.count else { return }
+            var ratios = base
+            ratios[index] = value
+            next = working.settingRowRatios(ratios)
+        }
+        guard let result = next else {
             showError(NSLocalizedString("Couldn\u{2019}t apply that row size.", tableName: "Main", value: "Couldn\u{2019}t apply that row size.", comment: "Per-track ratio apply failed"))
             return
         }
         clearFeedback()
-        // Deferred to the next runloop tick — see applyColumnRatio for why
-        // (TextField .id-on-commit first-responder render loop).
-        DispatchQueue.main.async { working = next }
+        // Deferred to the next runloop tick — see applyColumnRatio.
+        DispatchQueue.main.async { working = result }
     }
 
     /// Parse a single positive finite number from a field's text. Returns `nil`
@@ -564,22 +661,31 @@ struct LayoutEditorView: View {
 
     // MARK: - Edit actions (all run a pure op on `working`)
 
-    private func addColumn() {
-        // Split the widest column down the middle (the largest gap).
-        guard let mid = midpointOfLargestGap(working.colBoundaries) else { return }
+    /// Insert a new column divider at the MIDPOINT of column track `k` (hover-insert
+    /// "+"), splitting that column in two via `addingColumnBoundary`. Clears the
+    /// divider selection / feedback on success, as the removed Add buttons did.
+    private func insertColumn(splittingTrack k: Int) {
+        guard k >= 0, k + 1 < working.colBoundaries.count else { return }
+        let mid = (working.colBoundaries[k] + working.colBoundaries[k + 1]) / 2
         if let next = working.addingColumnBoundary(at: mid) {
             working = next
             resetSelectionAfterStructuralEdit()
+            clearFeedback()
         } else {
             showError(NSLocalizedString("Could not add a column there.", tableName: "Main", value: "Could not add a column there.", comment: ""))
         }
     }
 
-    private func addRow() {
-        guard let mid = midpointOfLargestGap(working.rowBoundaries) else { return }
+    /// Insert a new row divider at the MIDPOINT of row track `k` (hover-insert "+"),
+    /// splitting that row in two via `addingRowBoundary`. Rows are measured from the
+    /// top (no flip).
+    private func insertRow(splittingTrack k: Int) {
+        guard k >= 0, k + 1 < working.rowBoundaries.count else { return }
+        let mid = (working.rowBoundaries[k] + working.rowBoundaries[k + 1]) / 2
         if let next = working.addingRowBoundary(at: mid) {
             working = next
             resetSelectionAfterStructuralEdit()
+            clearFeedback()
         } else {
             showError(NSLocalizedString("Could not add a row there.", tableName: "Main", value: "Could not add a row there.", comment: ""))
         }
@@ -637,22 +743,6 @@ struct LayoutEditorView: View {
 
     // MARK: - Pure helpers
 
-    /// The midpoint of the largest gap between consecutive boundaries (where a new
-    /// divider should land), or nil if the array has no interior room.
-    private func midpointOfLargestGap(_ boundaries: [Double]) -> Double? {
-        guard boundaries.count >= 2 else { return nil }
-        var bestMid: Double? = nil
-        var bestGap = -1.0
-        for i in 1..<boundaries.count {
-            let gap = boundaries[i] - boundaries[i - 1]
-            if gap > bestGap {
-                bestGap = gap
-                bestMid = (boundaries[i] + boundaries[i - 1]) / 2
-            }
-        }
-        return bestMid
-    }
-
     /// The aspect-fitted CGRect (origin offset + size) for a canvas of `aspect`
     /// ratio inside `available`, leaving a small margin.
     static func fittedRect(aspect: CGSize, in available: CGSize) -> CGRect {
@@ -691,32 +781,88 @@ struct LayoutEditorView: View {
 // MARK: - Per-track ratio field
 
 /// A single small number field for ONE column or row track. It keeps the
-/// in-progress text in its OWN local `@State` and only reports a final value
-/// through `onCommit` (Return / focus loss), mirroring `LayoutNameField`. It
-/// re-seeds its text from the committed `value` (via `.id(value)`) whenever the
-/// working layout's proportions change externally — e.g. after a divider drag
-/// updates the proportions, or a rejected invalid commit snaps the field back to
-/// the current value.
+/// in-progress text in its OWN local `@State` and APPLIES LIVE as the user types
+/// (`.onChange(of: text)` -> `onApply` whenever the text parses to a positive
+/// number), not only on Return.
 ///
-/// `TextField(_:text:onCommit:)` and `RoundedBorderTextFieldStyle` are both
-/// available at the 10.15 deployment target.
+/// FREEZE SAFETY (the prior 100%-CPU loop): the field must NEVER be re-seeded /
+/// recreated WHILE it is the first responder — that recreation-mid-edit thrashed
+/// AppKit's end-editing cycle. So:
+///   - there is NO `.id(value)` (which recreated the field on every external
+///     value change), and
+///   - the external `value` is re-seeded into `text` ONLY when the field is NOT
+///     focused (`.onChange(of: value) { if !isFocused { … } }`), so an idle
+///     field still tracks a divider drag but a focused field is never interrupted.
+///
+/// When the axis is FREEFORM (`isFreeform`), the field renders GREYED showing an
+/// em-dash placeholder instead of a number (the "ratios not in use" state); it is
+/// still editable — typing a number reassembles a clean ratio via `onApply`.
+///
+/// `@FocusState` is macOS 12+ (the deployment target is 13.0). `.onChange` is 11+.
 private struct TrackRatioField: View {
     let value: String
-    let onCommit: (String) -> Void
+    let isFreeform: Bool
+    let onApply: (String) -> Void
 
     @State private var text: String
+    @FocusState private var isFocused: Bool
 
-    init(value: String, onCommit: @escaping (String) -> Void) {
+    /// The em-dash shown (greyed) for a freeform track when not being edited.
+    private static let freeformPlaceholder = "\u{2014}"
+
+    init(value: String, isFreeform: Bool, onApply: @escaping (String) -> Void) {
         self.value = value
-        self.onCommit = onCommit
-        _text = State(initialValue: value)
+        self.isFreeform = isFreeform
+        self.onApply = onApply
+        // Seed greyed dash for freeform; otherwise the clean integer.
+        _text = State(initialValue: isFreeform ? TrackRatioField.freeformPlaceholder : value)
     }
 
     var body: some View {
-        TextField("", text: $text, onCommit: { onCommit(text) })
+        TextField("", text: $text)
             .textFieldStyle(RoundedBorderTextFieldStyle())
             .font(.system(size: 11, design: .monospaced))
             .multilineTextAlignment(.center)
-            .id(value)
+            .foregroundColor(showsGreyedDash ? .secondary : .primary)
+            .focused($isFocused)
+            // LIVE APPLY: apply whenever the typed text parses to a positive
+            // number. Empty / non-numeric text is a silent no-op (no error spam
+            // mid-typing). Routes through onApply so clean-vs-freeform branching
+            // and the error feedback in the parent still apply.
+            .onChange(of: text) { newValue in
+                guard isFocused else { return }
+                let trimmed = newValue.trimmingCharacters(in: .whitespaces)
+                if let n = Double(trimmed), n.isFinite, n > 0 {
+                    onApply(trimmed)
+                }
+            }
+            // Re-seed from the external value ONLY while NOT focused, so a divider
+            // drag updates an idle field but never interrupts typing (and the field
+            // is never recreated mid-edit — the prior freeze).
+            .onChange(of: value) { newValue in
+                if !isFocused { text = isFreeform ? TrackRatioField.freeformPlaceholder : newValue }
+            }
+            // When the axis flips freeform<->clean externally (and we're idle),
+            // reflect the dash<->number change.
+            .onChange(of: isFreeform) { nowFreeform in
+                if !isFocused { text = nowFreeform ? TrackRatioField.freeformPlaceholder : value }
+            }
+            // On focus-IN of a freeform field, clear the dash placeholder so the
+            // user types into an empty field (not after the em-dash). On focus-OUT,
+            // snap back to the canonical display (clean integer, or the dash for a
+            // still-freeform axis) so partial / cleared text doesn't linger.
+            .onChange(of: isFocused) { focused in
+                if focused {
+                    if text == TrackRatioField.freeformPlaceholder { text = "" }
+                } else {
+                    text = isFreeform ? TrackRatioField.freeformPlaceholder : value
+                }
+            }
+    }
+
+    /// Show the greyed dash when the axis is freeform AND the field isn't being
+    /// actively typed into (the placeholder hasn't been replaced by a number).
+    private var showsGreyedDash: Bool {
+        isFreeform && text == TrackRatioField.freeformPlaceholder
     }
 }
