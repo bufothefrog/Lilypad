@@ -65,20 +65,33 @@ struct LayoutsRootView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
-                monitorPicker
-                sectionSeparator
-                layoutsSection
-                sectionSeparator
-                gridSettingsSection
-            }
-            .frame(width: Metrics.contentWidth, alignment: .leading)
-            .padding(Metrics.outerMargin)
-            // Center the fixed-width content column the way the AppKit panes
-            // center their 500pt stack in the wider window.
-            .frame(maxWidth: .infinity, alignment: .center)
+        // No ScrollView here: the content lays out at its natural intrinsic height
+        // so the hosting view reports a real fitting size and the toolbar window
+        // GROWS to fit (the way each fixed-size IB tab sizes the window to itself
+        // on selection), instead of clipping into a vertical scroll bar. The
+        // height is driven by `LayoutsViewController`'s hosting-view intrinsic
+        // content size; the width stays pinned at 850 there so the window never
+        // jumps horizontally across tabs and this 500pt column stays centered.
+        //
+        // The hosting view is the document of a capped NSScrollView in
+        // `LayoutsViewController`: while this content fits the active screen no
+        // scroller shows and the window sizes to it exactly (the desired behavior);
+        // only when the layouts list grows past the screen height does a scroller
+        // appear there so the bottom Gaps control stays reachable. That cap lives
+        // in the AppKit host (where the screen size is known) so this body stays
+        // ScrollView-free and keeps reporting a real intrinsic height.
+        VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
+            monitorPicker
+            sectionSeparator
+            layoutsSection
+            sectionSeparator
+            gridSettingsSection
         }
+        .frame(width: Metrics.contentWidth, alignment: .leading)
+        .padding(Metrics.outerMargin)
+        // Center the fixed-width content column the way the AppKit panes
+        // center their 500pt stack in the wider window.
+        .frame(maxWidth: .infinity, alignment: .center)
         .sheet(item: $editingLayout) { layout in
             LayoutEditorView(
                 displayUUID: model.selectedDisplayUUID ?? "",
@@ -375,14 +388,20 @@ private struct LayoutNameField: View {
 // MARK: - Hover-to-pick Add grid
 
 /// A small "insert table" style grid of square cells (up to `maxCols` × `maxRows`).
-/// Moving the pointer over a cell highlights the rectangle from the TOP-LEFT cell
-/// to the hovered cell and updates the "cols × rows" caption; clicking that cell
-/// calls `onPick(cols, rows)` to create a uniform layout of that size.
+/// Moving the pointer over the grid highlights the rectangle from the TOP-LEFT
+/// cell to the cell under the pointer and updates the "cols × rows" caption;
+/// clicking that cell calls `onPick(cols, rows)` to create a uniform layout of
+/// that size.
 ///
-/// Hover tracking uses `onHover` per cell, which is available at the 10.15
-/// deployment target (unlike `Menu` / `Label`, which are 11+). The highlighted
-/// extent is just the 1-based (col, row) of the hovered cell — every cell at or
-/// before it on BOTH axes is filled.
+/// Hover tracking uses a SINGLE, STABLE, location-based tracker (`HoverTracker`)
+/// overlaid on the cell-grid VStack — NOT per-cell `onHover`. Per-cell tracking
+/// areas are torn down and rebuilt every time the grid grows a track, so the cell
+/// newly under the pointer often failed to re-fire `onHover` (growth stalled
+/// until the pointer left and re-entered) and the leave handler could collapse
+/// the grid back to base size (flicker). The single tracking area is installed
+/// once and survives relayout, so growth stays smooth at the edge. The reported
+/// pointer location is converted to a 1-based (col, row) in SwiftUI; the
+/// highlighted extent is every cell at or before it on BOTH axes.
 private struct AddGridPicker: View {
     /// Called with the chosen (cols, rows) when a cell is clicked.
     let onPick: (Int, Int) -> Void
@@ -400,8 +419,9 @@ private struct AddGridPicker: View {
     private let cellSize: CGFloat = 18
     private let cellSpacing: CGFloat = 3
 
-    /// The 1-based (col, row) currently hovered, or `nil` when the pointer is
-    /// outside the grid. Drives the highlight, the caption, and the live size.
+    /// The 1-based (col, row) currently under the pointer, or `nil` when the
+    /// pointer is outside the grid. Drives the highlight, the caption, and the
+    /// live size.
     @State private var hovered: (col: Int, row: Int)? = nil
 
     /// The grid currently shown: one track BEYOND the hovered cell (a buffer to
@@ -416,6 +436,10 @@ private struct AddGridPicker: View {
         guard let h = hovered else { return baseRows }
         return min(maxRows, max(baseRows, h.row + 1))
     }
+
+    /// Center-to-center distance between adjacent cells, used to map a pointer
+    /// location back to a 1-based (col, row).
+    private var pitch: CGFloat { cellSize + cellSpacing }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -434,8 +458,34 @@ private struct AddGridPicker: View {
                     }
                 }
             }
+            // ONE stable location tracker over EXACTLY the cell-grid bounds (its
+            // origin is cell (1,1)'s top-left, not the caption or outer padding),
+            // so the math below lines up with the cells. The tracker reports a
+            // TOP-LEFT-origin location (its NSView is `isFlipped`), so larger y is
+            // lower on screen is a higher row number — row 1 stays the TOP row.
+            .overlay(
+                HoverTracker(
+                    onMove: { point in updateHover(at: point) },
+                    onExit: { hovered = nil }
+                )
+            )
+            // Map a click over the grid to the same cell the tracker is reporting.
+            .onTapGesture {
+                if let h = hovered { onPick(h.col, h.row) }
+            }
         }
         .padding(12)
+    }
+
+    /// Convert a TOP-LEFT-origin pointer location within the cell grid to a
+    /// 1-based (col, row) and store it. `nil` location (pointer outside) clears.
+    private func updateHover(at point: CGPoint?) {
+        guard let point = point else { hovered = nil; return }
+        // x grows rightward → column; y grows downward (flipped view) → row, so
+        // row 1 is the TOP row. `+ 1` makes the index 1-based; clamp to [1, max].
+        let col = min(maxCols, max(1, Int(point.x / pitch) + 1))
+        let row = min(maxRows, max(1, Int(point.y / pitch) + 1))
+        hovered = (col, row)
     }
 
     private var captionText: String {
@@ -456,18 +506,6 @@ private struct AddGridPicker: View {
                     .stroke(Color(NSColor.separatorColor), lineWidth: 1)
             )
             .frame(width: cellSize, height: cellSize)
-            .contentShape(Rectangle())
-            // Hovering a cell sets the highlighted extent; leaving clears it only
-            // if this cell is still the recorded one (so moving between cells
-            // doesn't flicker the highlight off).
-            .onHover { inside in
-                if inside {
-                    hovered = (col, row)
-                } else if let h = hovered, h.col == col, h.row == row {
-                    hovered = nil
-                }
-            }
-            .onTapGesture { onPick(col, row) }
     }
 
     /// A cell is filled iff it is at or before the hovered cell on BOTH axes
@@ -475,5 +513,84 @@ private struct AddGridPicker: View {
     private func isFilled(col: Int, row: Int) -> Bool {
         guard let h = hovered else { return false }
         return col <= h.col && row <= h.row
+    }
+}
+
+// MARK: - Stable location-based hover tracker
+
+/// A thin transparent overlay that installs ONE `NSTrackingArea` and reports the
+/// pointer location (or `nil` on exit) back to SwiftUI. Used by `AddGridPicker`
+/// instead of per-cell `onHover` so that the grid growing a track does NOT tear
+/// down and rebuild the tracking — the single area is reinstalled in place on
+/// resize and keeps reporting continuously, so edge growth stays smooth and never
+/// flickers back to base size.
+///
+/// COORDINATE CONVENTION: the backing `NSView` overrides `isFlipped` to return
+/// `true`, giving it a TOP-LEFT origin where y increases DOWNWARD. That matches
+/// `AddGridPicker`'s top-to-bottom row order, so a larger reported y maps to a
+/// higher (lower-on-screen) row number and ROW 1 IS THE TOP ROW. Without the
+/// flip, AppKit's default bottom-left origin would mirror the rows vertically
+/// (hovering the top row would highlight the bottom).
+private struct HoverTracker: NSViewRepresentable {
+    /// Reports the pointer location in the view's flipped (top-left origin)
+    /// coordinate space on enter/move.
+    let onMove: (CGPoint) -> Void
+    /// Reports that the pointer left the view.
+    let onExit: () -> Void
+
+    func makeNSView(context: Context) -> TrackingNSView {
+        let v = TrackingNSView()
+        v.onMove = onMove
+        v.onExit = onExit
+        return v
+    }
+
+    func updateNSView(_ nsView: TrackingNSView, context: Context) {
+        // Keep the closures fresh (they capture the current SwiftUI state setters).
+        nsView.onMove = onMove
+        nsView.onExit = onExit
+    }
+
+    /// The single-tracking-area NSView. Flipped so y increases downward (row 1 =
+    /// top). One `NSTrackingArea` with `.inVisibleRect` is reinstalled whenever the
+    /// view resizes (grid growth), but it always covers the whole bounds and keeps
+    /// reporting `.mouseMoved`, so tracking never lapses mid-growth.
+    final class TrackingNSView: NSView {
+        var onMove: ((CGPoint) -> Void)?
+        var onExit: (() -> Void)?
+
+        /// TOP-LEFT origin: y increases DOWNWARD to match the grid's row order, so
+        /// row 1 is the TOP row. This is the load-bearing line for vertical
+        /// orientation — do not remove.
+        override var isFlipped: Bool { true }
+
+        /// Stay transparent to mouse-DOWN/clicks so SwiftUI's `.onTapGesture` on
+        /// the underlying grid still fires (this view only tracks movement). The
+        /// tracking area continues to deliver enter/move/exit regardless.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            for area in trackingAreas { removeTrackingArea(area) }
+            // `.inVisibleRect` makes the area auto-track the current bounds, so it
+            // stays correct as the grid grows; `.activeInKeyWindow` keeps it live
+            // while the popover is up; mouse moved/entered/exited drive the report.
+            let area = NSTrackingArea(
+                rect: .zero,
+                options: [.activeInKeyWindow, .mouseEnteredAndExited, .mouseMoved, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+            addTrackingArea(area)
+        }
+
+        private func report(_ event: NSEvent) {
+            // Flipped view → this point already has a top-left origin.
+            onMove?(convert(event.locationInWindow, from: nil))
+        }
+
+        override func mouseEntered(with event: NSEvent) { report(event) }
+        override func mouseMoved(with event: NSEvent) { report(event) }
+        override func mouseExited(with event: NSEvent) { onExit?() }
     }
 }
