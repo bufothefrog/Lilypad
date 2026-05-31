@@ -42,16 +42,42 @@ struct LayoutsRootView: View {
     // no sheet. Identifiable so `.sheet(item:)` (10.15) drives presentation.
     @State private var editingLayout: ZoneLayout? = nil
 
+    // Visual conventions extracted from the AppKit prefs panes (Settings / Snap
+    // Areas scenes in Main.storyboard): a single fixed-width content column,
+    // centered, with standard outer margins, rows spaced 10pt apart within a
+    // section, and sections separated by a horizontal rule (the SwiftUI analogue
+    // of the storyboard's `boxType="separator"`) with even spacing above and
+    // below. Kept in one place so every section reads at the same density as the
+    // neighbouring tabs.
+    private enum Metrics {
+        /// Matches the 500pt content stack width of the AppKit panes.
+        static let contentWidth: CGFloat = 500
+        /// Standard outer margin around the content column.
+        static let outerMargin: CGFloat = 20
+        /// Vertical gap between rows inside a section (storyboard `spacing="10"`).
+        static let rowSpacing: CGFloat = 10
+        /// Gap above/below a section separator (storyboard separators reserve ~24pt).
+        static let sectionSpacing: CGFloat = 12
+        /// Fixed leading-label column width so trailing controls line up across rows.
+        static let labelColumnWidth: CGFloat = 160
+        /// Width of the trailing value readout column (e.g. "12 px").
+        static let valueColumnWidth: CGFloat = 50
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
                 monitorPicker
-                Divider()
+                sectionSeparator
                 layoutsSection
-                Divider()
+                sectionSeparator
                 gridSettingsSection
             }
-            .padding(20)
+            .frame(width: Metrics.contentWidth, alignment: .leading)
+            .padding(Metrics.outerMargin)
+            // Center the fixed-width content column the way the AppKit panes
+            // center their 500pt stack in the wider window.
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .sheet(item: $editingLayout) { layout in
             LayoutEditorView(
@@ -67,7 +93,7 @@ struct LayoutsRootView: View {
     // MARK: - Monitor picker
 
     private var monitorPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Metrics.rowSpacing) {
             sectionHeader(NSLocalizedString("Monitor", tableName: "Main", value: "Monitor", comment: "Layouts pane: monitor picker header"))
             Picker(selection: Binding(
                 get: { model.selectedDisplayUUID ?? "" },
@@ -80,9 +106,7 @@ struct LayoutsRootView: View {
             .labelsHidden()
             .frame(maxWidth: 360, alignment: .leading)
             if model.displays.isEmpty {
-                Text(NSLocalizedString("No displays known yet.", tableName: "Main", value: "No displays known yet.", comment: "Empty monitor list"))
-                    .foregroundColor(.secondary)
-                    .font(.caption)
+                secondaryText(NSLocalizedString("No displays known yet.", tableName: "Main", value: "No displays known yet.", comment: "Empty monitor list"))
             }
         }
     }
@@ -90,22 +114,18 @@ struct LayoutsRootView: View {
     // MARK: - Layouts list
 
     private var layoutsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Metrics.rowSpacing) {
             HStack {
                 sectionHeader(NSLocalizedString("Layouts", tableName: "Main", value: "Layouts", comment: "Layouts pane: layouts list header"))
                 Spacer()
                 addButton
             }
             if model.selectedDisplayUUID == nil {
-                Text(NSLocalizedString("Select a monitor to configure its layouts.", tableName: "Main", value: "Select a monitor to configure its layouts.", comment: "No monitor selected"))
-                    .foregroundColor(.secondary)
-                    .font(.caption)
+                secondaryText(NSLocalizedString("Select a monitor to configure its layouts.", tableName: "Main", value: "Select a monitor to configure its layouts.", comment: "No monitor selected"))
             } else if model.layouts.isEmpty {
-                Text(NSLocalizedString("No layouts yet. Use Add to create one.", tableName: "Main", value: "No layouts yet. Use Add to create one.", comment: "No layouts for display"))
-                    .foregroundColor(.secondary)
-                    .font(.caption)
+                secondaryText(NSLocalizedString("No layouts yet. Use Add to create one.", tableName: "Main", value: "No layouts yet. Use Add to create one.", comment: "No layouts for display"))
             } else {
-                VStack(spacing: 6) {
+                VStack(spacing: Metrics.rowSpacing) {
                     ForEach(model.layouts, id: \.id) { layout in
                         layoutRow(layout)
                     }
@@ -151,7 +171,7 @@ struct LayoutsRootView: View {
             .frame(maxWidth: 200)
 
             Text("\(layout.cols)×\(layout.rows)")
-                .font(.caption)
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
 
             Spacer()
@@ -175,7 +195,7 @@ struct LayoutsRootView: View {
     // MARK: - Grid settings
 
     private var gridSettingsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.rowSpacing) {
             sectionHeader(NSLocalizedString("Grid Behavior", tableName: "Main", value: "Grid Behavior", comment: "Grid settings header"))
 
             Toggle(NSLocalizedString("Enable grid mode", tableName: "Main", value: "Enable grid mode", comment: ""), isOn: $model.gridModeEnabled)
@@ -189,14 +209,10 @@ struct LayoutsRootView: View {
 
             sectionSubheader(NSLocalizedString("Proximity span", tableName: "Main", value: "Proximity span", comment: ""))
             Toggle(NSLocalizedString("Span by proximity (no modifier)", tableName: "Main", value: "Span by proximity (no modifier)", comment: "Proximity span toggle"), isOn: $model.proximitySpanEnabled)
-            HStack {
-                Text(NSLocalizedString("Radius", tableName: "Main", value: "Radius", comment: "Proximity span radius"))
-                    .frame(width: 160, alignment: .leading)
-                Slider(value: $model.proximitySpanRadius, in: 10...120)
-                    .frame(width: 200)
-                Stepper("", value: $model.proximitySpanRadius, in: 10...120, step: 1).labelsHidden()
-                Text("\(Int(model.proximitySpanRadius)) px").frame(width: 50, alignment: .leading)
-            }
+            sliderRow(
+                NSLocalizedString("Radius", tableName: "Main", value: "Radius", comment: "Proximity span radius"),
+                value: $model.proximitySpanRadius, in: 10...120
+            )
             .disabled(!model.proximitySpanEnabled)
 
             settingRow(NSLocalizedString("Shortcut targets", tableName: "Main", value: "Shortcut targets", comment: "")) {
@@ -217,14 +233,10 @@ struct LayoutsRootView: View {
             colorControls
 
             sectionSubheader(NSLocalizedString("Gaps", tableName: "Main", value: "Gaps", comment: ""))
-            HStack {
-                Text(NSLocalizedString("Gap size", tableName: "Main", value: "Gap size", comment: ""))
-                    .frame(width: 160, alignment: .leading)
-                Slider(value: $model.gapSize, in: 0...50)
-                    .frame(width: 200)
-                Stepper("", value: $model.gapSize, in: 0...50, step: 1).labelsHidden()
-                Text("\(Int(model.gapSize)) px").frame(width: 50, alignment: .leading)
-            }
+            sliderRow(
+                NSLocalizedString("Gap size", tableName: "Main", value: "Gap size", comment: ""),
+                value: $model.gapSize, in: 0...50
+            )
         }
     }
 
@@ -246,9 +258,7 @@ struct LayoutsRootView: View {
                 )).labelsHidden()
             }
         } else {
-            Text(NSLocalizedString("Zone colors require macOS 11 or later.", tableName: "Main", value: "Zone colors require macOS 11 or later.", comment: ""))
-                .foregroundColor(.secondary)
-                .font(.caption)
+            secondaryText(NSLocalizedString("Zone colors require macOS 11 or later.", tableName: "Main", value: "Zone colors require macOS 11 or later.", comment: ""))
         }
     }
 
@@ -274,19 +284,56 @@ struct LayoutsRootView: View {
     }
 
     private func settingRow<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        HStack {
-            Text(title).frame(width: 160, alignment: .leading)
+        HStack(spacing: Metrics.rowSpacing) {
+            Text(title).frame(width: Metrics.labelColumnWidth, alignment: .leading)
             content()
             Spacer()
         }
     }
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title).font(.headline)
+    /// A label + slider + stepper + value-readout row, with the same fixed label
+    /// and value columns as `settingRow` so the slider rows line up with the
+    /// picker rows above them.
+    private func sliderRow(_ title: String, value: Binding<Float>, in range: ClosedRange<Float>) -> some View {
+        HStack(spacing: Metrics.rowSpacing) {
+            Text(title).frame(width: Metrics.labelColumnWidth, alignment: .leading)
+            Slider(value: value, in: range)
+                .frame(width: 200)
+            Stepper("", value: value, in: range, step: 1).labelsHidden()
+            Text("\(Int(value.wrappedValue)) px").frame(width: Metrics.valueColumnWidth, alignment: .leading)
+            Spacer()
+        }
     }
 
+    /// A horizontal rule between sections — the SwiftUI equivalent of the AppKit
+    /// panes' `boxType="separator"`. Constrained to the content column width so it
+    /// doesn't run edge-to-edge.
+    private var sectionSeparator: some View {
+        Divider().frame(width: Metrics.contentWidth)
+    }
+
+    /// Section header: bold, regular system size, matching the AppKit panes'
+    /// `NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)` group headers.
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: NSFont.systemFontSize, weight: .bold))
+    }
+
+    /// Sub-section header within a section: same bold weight as the section
+    /// header but in the secondary color, to read as a quieter grouping label.
     private func sectionSubheader(_ title: String) -> some View {
-        Text(title).font(.subheadline).bold().foregroundColor(.secondary)
+        Text(title)
+            .font(.system(size: NSFont.systemFontSize, weight: .bold))
+            .foregroundColor(.secondary)
+            .padding(.top, 2)
+    }
+
+    /// Secondary / explanatory text, matching the AppKit panes' 11pt
+    /// `secondaryLabelColor` message font.
+    private func secondaryText(_ string: String) -> some View {
+        Text(string)
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
     }
 }
 

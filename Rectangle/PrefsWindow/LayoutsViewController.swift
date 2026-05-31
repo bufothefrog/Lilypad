@@ -18,9 +18,18 @@ import SwiftUI
 class LayoutsViewController: NSViewController {
 
     override func loadView() {
-        // A plain container the hosting view is pinned inside. Sized to roughly
-        // match the other prefs tabs; the tab view resizes it to fit the window.
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 480))
+        // A plain container the hosting view is pinned inside. The prefs window is
+        // an NSTabViewController with `tabStyle = .toolbar`, which resizes the
+        // window to fit each selected tab's content view. The three IB scenes
+        // (Shortcuts / General / Snap Areas) are all 850pt wide, so this container
+        // must match that width or the toolbar window visibly shrinks and
+        // re-expands when switching to and from the Layouts tab. The SwiftUI
+        // content keeps its 500pt column centered inside this 850pt view via
+        // `.frame(maxWidth: .infinity, alignment: .center)` — the same way the
+        // AppKit panes center their 500pt stack inside the 850pt scene. The height
+        // sits within the other scenes' range (567–686pt) so the window doesn't
+        // jump vertically either; the SwiftUI pane scrolls if it needs more.
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 850, height: 620))
     }
 
     override func viewDidLoad() {

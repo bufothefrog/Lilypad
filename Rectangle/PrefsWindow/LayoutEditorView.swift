@@ -137,9 +137,9 @@ struct LayoutEditorView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(NSLocalizedString("Edit Layout", tableName: "Main", value: "Edit Layout", comment: "Layout editor sheet title"))
-                .font(.headline)
+                .font(.system(size: NSFont.systemFontSize, weight: .bold))
             Text(resolutionSubtitle)
-                .font(.subheadline)
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -441,7 +441,9 @@ struct LayoutEditorView: View {
     /// A labeled `GroupBox` (10.15) wrapping section content with the native
     /// grouped-section look and consistent inner padding.
     private func editorGroupBox<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        GroupBox(label: Text(title).font(.subheadline).bold()) {
+        // The group-box label uses the same bold regular-system-size weight as the
+        // AppKit panes' section headers, so the sheet reads at the app's density.
+        GroupBox(label: Text(title).font(.system(size: NSFont.systemFontSize, weight: .bold))) {
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 4)
