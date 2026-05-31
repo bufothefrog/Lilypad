@@ -23,6 +23,7 @@
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>lilypad</string>
 				<string>rectangle</string>
 			</array>
 		</dict>
@@ -42,7 +43,7 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>SUFeedURL</key>
-	<string>https://rectangleapp.com/downloads/updates.xml</string>
+	<string>https://lilypad.example.com/downloads/updates.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>lpt9M3PhocbZ3MZiLH+crEqRfU11kfoNzGxSqiEIdvM=</string>
 	<key>SUScheduledCheckInterval</key>
