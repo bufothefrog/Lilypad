@@ -340,29 +340,48 @@ private struct AddGridPicker: View {
     /// Called with the chosen (cols, rows) when a cell is clicked.
     let onPick: (Int, Int) -> Void
 
-    /// Grid bounds — "up to about 8 × 8" per the spec.
-    private let maxCols = 8
-    private let maxRows = 8
+    /// Hard cap on how large the picker can grow.
+    private let maxCols = 12
+    private let maxRows = 12
+
+    /// The picker starts at this size and grows a track whenever the pointer
+    /// reaches the current edge ("insert table" style dynamic growth).
+    private let baseCols = 3
+    private let baseRows = 3
 
     /// Visual sizing of each square cell + the spacing between cells.
     private let cellSize: CGFloat = 18
     private let cellSpacing: CGFloat = 3
 
     /// The 1-based (col, row) currently hovered, or `nil` when the pointer is
-    /// outside the grid. Drives both the highlight and the caption.
+    /// outside the grid. Drives the highlight, the caption, and the live size.
     @State private var hovered: (col: Int, row: Int)? = nil
 
+    /// The grid currently shown: one track BEYOND the hovered cell (a buffer to
+    /// grow into), clamped to [base, max]; back to the base size when idle. So
+    /// reaching the right/bottom edge reveals another column/row and the popover
+    /// grows with it.
+    private var displayedCols: Int {
+        guard let h = hovered else { return baseCols }
+        return min(maxCols, max(baseCols, h.col + 1))
+    }
+    private var displayedRows: Int {
+        guard let h = hovered else { return baseRows }
+        return min(maxRows, max(baseRows, h.row + 1))
+    }
+
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             // Caption: the size that a click would create, or a prompt when idle.
             Text(captionText)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(.primary)
 
-            VStack(spacing: cellSpacing) {
-                ForEach(1...maxRows, id: \.self) { row in
+            // Grows toward the bottom-right as the pointer reaches an edge.
+            VStack(alignment: .leading, spacing: cellSpacing) {
+                ForEach(1...displayedRows, id: \.self) { row in
                     HStack(spacing: cellSpacing) {
-                        ForEach(1...maxCols, id: \.self) { col in
+                        ForEach(1...displayedCols, id: \.self) { col in
                             cell(col: col, row: row)
                         }
                     }
