@@ -505,7 +505,14 @@ struct LayoutEditorView: View {
             return
         }
         clearFeedback()
-        working = next
+        // Defer the working-copy swap to the next runloop tick. This commit fires
+        // from a TextField's onCommit (Return); replacing `working` synchronously
+        // re-creates the field (its `.id(value)` changes as the normalized ratio
+        // updates, e.g. "2" -> "1") WHILE it is still the first responder, which
+        // thrashes AppKit's end-editing cycle into a 100%-CPU render loop. Letting
+        // the field finish resigning first responder before its identity changes
+        // breaks the loop.
+        DispatchQueue.main.async { working = next }
     }
 
     /// Commit a typed number into the ROW ratio field at `index`. Same contract as
@@ -524,7 +531,9 @@ struct LayoutEditorView: View {
             return
         }
         clearFeedback()
-        working = next
+        // Deferred to the next runloop tick — see applyColumnRatio for why
+        // (TextField .id-on-commit first-responder render loop).
+        DispatchQueue.main.async { working = next }
     }
 
     /// Parse a single positive finite number from a field's text. Returns `nil`
