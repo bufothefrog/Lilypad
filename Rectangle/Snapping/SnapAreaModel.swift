@@ -17,21 +17,15 @@ class SnapAreaModel {
         .tl: SnapAreaConfig(action: .topLeft),
         .t: SnapAreaConfig(action: .maximize),
         .tr: SnapAreaConfig(action: .topRight),
-        .l: SnapAreaConfig(compound: .leftTopBottomHalf),
-        .r: SnapAreaConfig(compound: .rightTopBottomHalf),
         .bl: SnapAreaConfig(action: .bottomLeft),
-        .b: SnapAreaConfig(compound: .thirds),
         .br: SnapAreaConfig(action: .bottomRight)
     ]
-    
+
     static let defaultPortrait: [Directional:SnapAreaConfig] = [
         .tl: SnapAreaConfig(action: .topLeft),
         .t: SnapAreaConfig(action: .maximize),
         .tr: SnapAreaConfig(action: .topRight),
-        .l: SnapAreaConfig(compound: .portraitThirdsSide),
-        .r: SnapAreaConfig(compound: .portraitThirdsSide),
         .bl: SnapAreaConfig(action: .bottomLeft),
-        .b: SnapAreaConfig(compound: .halves),
         .br: SnapAreaConfig(action: .bottomRight)
     ]
     
@@ -44,12 +38,12 @@ class SnapAreaModel {
 
     var isTopConfigured: Bool {
         if let landscapeTop = landscape[.t] {
-            if landscapeTop.action != nil || landscapeTop.compound != nil {
+            if landscapeTop.action != nil {
                 return true
             }
         }
         if NSScreen.portraitDisplayConnected, let portraitTop = portrait[.t] {
-            if portraitTop.action != nil || portraitTop.compound != nil {
+            if portraitTop.action != nil {
                 return true
             }
         }
@@ -137,11 +131,6 @@ class SnapAreaModel {
     }
     
     func migrate() {
-        if Defaults.sixthsSnapArea.userEnabled {
-            setLandscape(directional: .t, snapAreaConfig: SnapAreaConfig(compound: .topSixths))
-            setLandscape(directional: .b, snapAreaConfig: SnapAreaConfig(compound: .bottomSixths))
-        }
-
         let ignoredSnapAreas = SnapAreaOption(rawValue: Defaults.ignoredSnapAreas.value)
         guard ignoredSnapAreas.rawValue > 0 else { return }
         
@@ -180,11 +169,9 @@ enum DisplayOrientation {
 }
 
 struct SnapAreaConfig: Codable {
-    let compound: CompoundSnapArea?
     let action: WindowAction?
 
-    init(compound: CompoundSnapArea? = nil, action: WindowAction? = nil) {
-        self.compound = compound
+    init(action: WindowAction? = nil) {
         self.action = action
     }
 }
