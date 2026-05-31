@@ -17,7 +17,10 @@ class SnapAreaModel {
         .tl: SnapAreaConfig(action: .topLeft),
         .t: SnapAreaConfig(action: .maximize),
         .tr: SnapAreaConfig(action: .topRight),
+        .l: SnapAreaConfig(action: .leftHalf),
+        .r: SnapAreaConfig(action: .rightHalf),
         .bl: SnapAreaConfig(action: .bottomLeft),
+        .b: SnapAreaConfig(action: .bottomHalf),
         .br: SnapAreaConfig(action: .bottomRight)
     ]
 
@@ -25,7 +28,10 @@ class SnapAreaModel {
         .tl: SnapAreaConfig(action: .topLeft),
         .t: SnapAreaConfig(action: .maximize),
         .tr: SnapAreaConfig(action: .topRight),
+        .l: SnapAreaConfig(action: .leftHalf),
+        .r: SnapAreaConfig(action: .rightHalf),
         .bl: SnapAreaConfig(action: .bottomLeft),
+        .b: SnapAreaConfig(action: .bottomHalf),
         .br: SnapAreaConfig(action: .bottomRight)
     ]
     
