@@ -12,9 +12,8 @@
 //  - GRID SETTINGS read/write the individual grid `Defaults` with the correct
 //    accessor per type (`BoolDefault.enabled`, `IntDefault.value`,
 //    `IntEnumDefault.value`, `FloatDefault.value`, `JSONDefault.typedValue`).
-//    Mutations that the running managers must pick up live
-//    (`gridModeEnabled` toggles the drag path; the modifiers / wall actions /
-//    colors are read live by the snapping + grid managers) post
+//    Mutations that the running managers must pick up live (the modifiers / wall
+//    actions / colors are read live by the snapping + grid managers) post
 //    `Notification.Name.changeDefaults`, mirroring the existing panes.
 //
 //  The model refreshes its display list on `didChangeScreenParametersNotification`
@@ -46,13 +45,6 @@ class GridSettingsModel: ObservableObject {
     @Published var activeLayoutId: String?
 
     // MARK: - Grid settings (read current Default, write back on change)
-
-    @Published var gridModeEnabled: Bool {
-        didSet {
-            Defaults.gridModeEnabled.enabled = gridModeEnabled
-            Notification.Name.changeDefaults.post()
-        }
-    }
 
     /// Activation / span modifiers stored as `NSEvent.ModifierFlags` raw values
     /// (the same Ints the drag path reads). 0 == None.
@@ -163,7 +155,6 @@ class GridSettingsModel: ObservableObject {
         // observers. `loadingFromDefaults` is irrelevant here (the initializers
         // run before `self` is fully formed), but the values must be read with
         // the correct accessor per Default type.
-        gridModeEnabled = Defaults.gridModeEnabled.enabled
         activationModifierRaw = Defaults.gridActivationModifier.value
         spanModifierRaw = Defaults.gridSpanModifier.value
         shortcutTargetMode = Defaults.shortcutTargetMode.value
@@ -293,7 +284,6 @@ class GridSettingsModel: ObservableObject {
     func reloadFromDefaults() {
         loadingFromDefaults = true
         defer { loadingFromDefaults = false }
-        gridModeEnabled = Defaults.gridModeEnabled.enabled
         activationModifierRaw = Defaults.gridActivationModifier.value
         spanModifierRaw = Defaults.gridSpanModifier.value
         shortcutTargetMode = Defaults.shortcutTargetMode.value

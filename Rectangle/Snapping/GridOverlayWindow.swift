@@ -8,9 +8,8 @@
 //  coordinate integration can be verified visually before any drag/keyboard
 //  path is wired on top of it (M5+).
 //
-//  This file is purely additive: nothing here is invoked by real drag or
-//  keyboard handling yet. The only caller in M4 is the temporary
-//  "Debug: Show Grid Overlay" status-menu item.
+//  The overlay is driven by the live grid drag path (`SnappingManager.gridOverlay`)
+//  during a Shift-drag, showing the zone/span preview the release will snap to.
 //
 //  COORDINATE INTEGRATION (the whole point of M4 — see LILYPAD_PLAN.md
 //  "Stage 3" overlay finding):

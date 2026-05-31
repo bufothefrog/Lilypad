@@ -111,12 +111,4 @@ class GridSettingsModelTests: XCTestCase {
         XCTAssertEqual(GridModifierChoice.from(rawValue: Int(NSEvent.ModifierFlags.option.rawValue)), .option)
         XCTAssertEqual(GridModifierChoice.from(rawValue: 999999), .none)
     }
-
-    func testGridModeToggleWritesDefault() {
-        let original = Defaults.gridModeEnabled.enabled
-        model.gridModeEnabled = !original
-        XCTAssertEqual(Defaults.gridModeEnabled.enabled, !original)
-        // restore
-        Defaults.gridModeEnabled.enabled = original
-    }
 }

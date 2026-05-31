@@ -8,12 +8,6 @@
 
 import Cocoa
 
-struct SnapArea: Equatable {
-    let screen: NSScreen
-    let directional: Directional
-    let action: WindowAction
-}
-
 class SnappingManager {
     
     private let fullIgnoreIds: [String] = Defaults.fullIgnoreBundleIds.typedValue ?? ["com.install4j", 
@@ -32,18 +26,15 @@ class SnappingManager {
     var isFullScreen: Bool = false
     var allowListening: Bool = true
     var initialWindowRect: CGRect?
-    var currentSnapArea: SnapArea?
     var dragPrevY: Double?
     var dragRestrictionExpirationTimestamp: UInt64 = 0
     var dragRestrictionExpired: Bool { DispatchTime.now().uptimeMilliseconds > dragRestrictionExpirationTimestamp }
 
-    var box: FootprintWindow?
-
     // MARK: - Lilypad grid-drag state (M5)
-    // A single reusable overlay (mirrors the FootprintWindow `box` pattern) and
-    // the zone/screen currently previewed by the grid path. These are only ever
-    // touched when grid mode is engaged; when it is NOT engaged the overlay is
-    // hidden and these are nil, so the classic edge-snap path is untouched.
+    // A single reusable overlay (built on FootprintWindow's window recipe) and the
+    // zone/screen currently previewed by the grid path. These are only ever touched
+    // when grid mode is engaged; when it is NOT engaged the overlay is hidden and
+    // these are nil, and the drag is just a plain window move (no snapping).
     lazy var gridOverlay: GridOverlayWindow = GridOverlayWindow()
     var currentGridScreen: NSScreen?
     var currentGridLayout: ZoneLayout?
@@ -53,7 +44,7 @@ class SnappingManager {
     // The anchor zone a span extends FROM. Set when the span modifier transitions
     // down (to the zone under the cursor at that moment), cleared when it goes up
     // or any grid preview is cleared. nil ⇒ single-zone behavior. Only touched on
-    // the grid path, so the classic edge-snap path is unaffected.
+    // the grid path (the only drag-snap path).
     var gridSpanAnchorZone: Int?
 
     // MARK: - Lilypad proximity-span state (optional drag mode, default OFF)
@@ -67,12 +58,7 @@ class SnappingManager {
     var currentGridProximityZones: Set<Int>?
 
     let screenDetection = ScreenDetection()
-    
-    private let marginTop = Defaults.snapEdgeMarginTop.cgFloat
-    private let marginBottom = Defaults.snapEdgeMarginBottom.cgFloat
-    private let marginLeft = Defaults.snapEdgeMarginLeft.cgFloat
-    private let marginRight = Defaults.snapEdgeMarginRight.cgFloat
-    
+
     init() {
         // Force lazy init of DisplayRegistry so the known-displays registry
         // observer (didChangeScreenParametersNotification) is installed at
@@ -160,16 +146,12 @@ class SnappingManager {
     }
     
     private func enableSnapping() {
-        if box == nil {
-            box = FootprintWindow()
-        }
         if eventMonitor == nil {
             startEventMonitor()
         }
     }
-    
+
     private func disableSnapping() {
-        box = nil
         // Hide the grid overlay too, so it can't strand visible if snapping is
         // turned off mid grid-drag (app ignored / fullscreen). No-op when grid mode
         // was never used (the overlay is lazy and stays uninstantiated).
@@ -179,8 +161,8 @@ class SnappingManager {
     
     private func startEventMonitor() {
         // `.flagsChanged` (M5) lets pressing/releasing the grid-activation modifier
-        // mid-drag enter/leave grid mode without any cursor movement. It is a no-op
-        // for the classic edge-snap path (handled explicitly in `handle`).
+        // mid-drag enter/leave grid mode without any cursor movement. Outside grid
+        // mode it is a no-op (a plain drag just moves the window).
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseUp, .leftMouseDragged, .flagsChanged]
         eventMonitor = Defaults.missionControlDragging.userDisabled ? ActiveEventMonitor(mask: mask, filterer: filter, handler: handle) : PassiveEventMonitor(mask: mask, handler: handle)
         eventMonitor?.start()
@@ -216,10 +198,9 @@ class SnappingManager {
     
     /// Whether the Lilypad grid drag path should engage right now.
     ///
-    /// Grid mode engages during a drag when BOTH the master flag is on AND the
-    /// grid-activation modifier is currently held. This is the SOLE gate that
-    /// chooses between the grid path and the classic edge-snap path — when it
-    /// returns false the existing behavior must be byte-for-byte unchanged.
+    /// Grid mode engages during a drag when the grid-activation modifier is
+    /// currently held. This is the SOLE gate that chooses whether a drag snaps to
+    /// the grid: when it returns false the window just moves freely.
     ///
     /// SPAN COEXISTENCE (M6): the span modifier (default Option) must be allowed
     /// as an EXTRA held modifier so Shift+Option still engages grid mode (to span)
@@ -231,12 +212,10 @@ class SnappingManager {
     /// exact-match behavior.
     ///
     /// Factored out as a PURE function (no instance state) so it is unit-testable
-    /// across the flag-on/off × modifier-held/not matrix.
+    /// across the modifier-held/not matrix.
     static func gridModeEngaged(modifierFlags: NSEvent.ModifierFlags,
-                                gridModeEnabled: Bool,
                                 activationModifierRawValue: Int,
                                 spanModifierRawValue: Int) -> Bool {
-        guard gridModeEnabled else { return false }
         // A 0 activation modifier means "no modifier required": engage on the
         // flag alone, regardless of which extra modifiers (incl. span) are held.
         guard activationModifierRawValue > 0 else { return true }
@@ -300,7 +279,6 @@ class SnappingManager {
     /// Instance convenience reading current Defaults.
     func gridModeEngaged(_ event: NSEvent) -> Bool {
         SnappingManager.gridModeEngaged(modifierFlags: event.modifierFlags,
-                                        gridModeEnabled: Defaults.gridModeEnabled.enabled,
                                         activationModifierRawValue: Defaults.gridActivationModifier.value,
                                         spanModifierRawValue: Defaults.gridSpanModifier.value)
     }
@@ -337,11 +315,10 @@ class SnappingManager {
             }
         case .leftMouseUp:
             // Lilypad grid mode (M5) OWNS the gesture when engaged: snap to the
-            // previewed zone if eligible, otherwise do nothing — it never falls
-            // through to a classic edge snap (so releasing over a non-zone, or when
-            // ineligible, doesn't trigger a surprise edge snap). Gated on
-            // canSnap(event) exactly like the edge path's postSnap, since Stage /
-            // modifier state can change between the last dragged event and mouseUp.
+            // previewed zone if eligible, otherwise do nothing (releasing over a
+            // non-zone, or when ineligible, just leaves the window where it was
+            // dragged). Re-check canSnap(event) at mouseUp because Stage / modifier
+            // state can change between the last dragged event and mouseUp.
             if gridModeEngaged(event) {
                 // Only the SHARED eligibility (canSnap + screen/layout/window) is
                 // guarded up front. The commit BRANCH is chosen by the pure
@@ -388,34 +365,9 @@ class SnappingManager {
                 lastWindowIdAttempt = nil
                 return
             }
-            // Not grid mode: ensure no grid overlay lingers, then run the classic
-            // edge-snap commit unchanged.
+            // Not grid mode: the window just moved freely (no snapping). Ensure no
+            // grid overlay lingers, then reset the drag state.
             clearGridPreview()
-
-            if let currentSnapArea = self.currentSnapArea {
-                box?.orderOut(nil)
-                currentSnapArea.action.postSnap(windowElement: windowElement, windowId: windowId, screen: currentSnapArea.screen)
-                self.currentSnapArea = nil
-            } else {
-                // it's possible that the window has moved, but the mouse dragged events are not getting the updated window position
-                // this typically only happens if the user is dragging and dropping windows really quickly
-                // in this scenario, the footprint doesn't display but the snap will still occur, as long as the window position is updated as of mouse up.
-                if let currentRect = windowElement?.frame,
-                   let windowId = windowId,
-                   currentRect.size == initialWindowRect?.size,
-                   currentRect.origin != initialWindowRect?.origin {
-  
-                    unsnapRestore(windowId: windowId, currentRect: currentRect, cursorLoc: event.cgEvent?.location)
-                    
-                    if let snapArea = snapAreaContainingCursor(priorSnapArea: currentSnapArea)  {
-                        box?.orderOut(nil)
-                        if canSnap(event) {
-                            snapArea.action.postSnap(windowElement: windowElement, windowId: windowId, screen: snapArea.screen)
-                        }
-                        self.currentSnapArea = nil
-                    }
-                }
-            }
             windowElement = nil
             windowId = nil
             windowMoving = false
@@ -454,67 +406,17 @@ class SnappingManager {
             }
             if windowMoving {
                 if !canSnap(event) {
-                    if currentSnapArea != nil {
-                        box?.orderOut(nil)
-                        currentSnapArea = nil
-                    }
                     clearGridPreview()
                     return
                 }
 
-                // Lilypad grid path (M5): gated on gridModeEngaged. When NOT
-                // engaged we fall through to the EXISTING edge-snap path below,
-                // unchanged, and make sure the grid overlay is hidden.
+                // Lilypad grid path: gated on gridModeEngaged. When NOT engaged the
+                // window just moves freely with no preview.
                 if gridModeEngaged(event) {
-                    // Edge snap state must not coexist with grid mode.
-                    if currentSnapArea != nil {
-                        box?.orderOut(nil)
-                        currentSnapArea = nil
-                    }
                     updateGridPreview(windowId: windowId, currentRect: currentRect, spanEngaged: spanEngaged(event))
                     return
                 }
                 clearGridPreview()
-
-                if let snapArea = snapAreaContainingCursor(priorSnapArea: currentSnapArea) {
-                    if snapArea == currentSnapArea {
-                        return
-                    }
-                    
-                    if Defaults.hapticFeedbackOnSnap.userEnabled {
-                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-                    }
-                    
-                    let currentWindow = Window(id: windowId, rect: currentRect)
-                    
-                    if let newBoxRect = getBoxRect(hotSpot: snapArea, currentWindow: currentWindow) {
-                        if box == nil {
-                            box = FootprintWindow()
-                        }
-                        if Defaults.footprintAnimationDurationMultiplier.value > 0 {
-                            if !box!.realIsVisible, let origin = getFootprintAnimationOrigin(snapArea, newBoxRect) {
-                                let frame = CGRect(origin: origin, size: .zero)
-                                box!.setFrame(frame, display: false)
-                            }
-                        } else {
-                            box!.setFrame(newBoxRect, display: true)
-                        }
-                        box!.orderFront(nil)
-                        if Defaults.footprintAnimationDurationMultiplier.value > 0 {
-                            NSAnimationContext.runAnimationGroup { changes in
-                                changes.duration = getFootprintAnimationDuration(box!, newBoxRect)
-                                box!.animator().setFrame(newBoxRect, display: true)
-                            }
-                        }
-                    }
-                    
-                    currentSnapArea = snapArea
-                } else {
-                    if currentSnapArea != nil {
-                        box?.orderOut(nil)
-                        currentSnapArea = nil
-                    }
-                }
             }
         case .flagsChanged:
             // Only meaningful mid-drag: pressing/releasing the grid-activation
@@ -540,10 +442,6 @@ class SnappingManager {
             }
 
             if gridModeEngaged(event) {
-                if currentSnapArea != nil {
-                    box?.orderOut(nil)
-                    currentSnapArea = nil
-                }
                 // Span sub-mode (M6): a .flagsChanged is exactly where the span
                 // modifier transitions down/up mid-drag, with no cursor movement.
                 // updateGridPreview owns the anchor logic: span engaged + no anchor
@@ -553,9 +451,9 @@ class SnappingManager {
                 // the new span/single state immediately.
                 updateGridPreview(windowId: windowId, currentRect: currentRect, spanEngaged: spanEngaged(event))
             } else {
-                // Left grid mode: hide the overlay. We deliberately do NOT
-                // re-render the edge-snap footprint here (no cursor info this
-                // event); the next .leftMouseDragged restores edge snapping.
+                // Left grid mode mid-drag: hide the overlay. The drag now just
+                // moves the window freely; the next .leftMouseDragged simply
+                // continues that free move (there is no snapping outside grid mode).
                 clearGridPreview()
             }
         default:
@@ -801,127 +699,5 @@ class SnappingManager {
                 AppDelegate.windowHistory.restoreRects[windowId] = initialWindowRect
             }
         }
-    }
-    
-    func getFootprintAnimationDuration(_ box: FootprintWindow, _ boxRect: CGRect) -> Double {
-        return box.animationResizeTime(boxRect) * Double(Defaults.footprintAnimationDurationMultiplier.value)
-    }
-    
-    func getFootprintAnimationOrigin(_ snapArea: SnapArea, _ boxRect: CGRect) -> CGPoint? {
-        switch snapArea.directional {
-        case .tl:
-            return CGPoint(x: boxRect.minX, y: boxRect.maxY)
-        case .t:
-            return CGPoint(x: boxRect.midX, y: boxRect.maxY)
-        case .tr:
-            return CGPoint(x: boxRect.maxX, y: boxRect.maxY)
-        case .l:
-            return CGPoint(x: boxRect.minX, y: boxRect.midY)
-        case .r:
-            return CGPoint(x: boxRect.maxX, y: boxRect.midY)
-        case .bl:
-            return CGPoint(x: boxRect.minX, y: boxRect.minY)
-        case .b:
-            return CGPoint(x: boxRect.midX, y: boxRect.minY)
-        case .br:
-            return CGPoint(x: boxRect.maxX, y: boxRect.minY)
-        default:
-            return nil
-        }
-    }
-    
-    func getBoxRect(hotSpot: SnapArea, currentWindow: Window) -> CGRect? {
-        if let calculation = WindowCalculationFactory.calculationsByAction[hotSpot.action] {
-            
-            let ignoreTodo = TodoManager.isTodoWindow(currentWindow.id)
-            let rectCalcParams = RectCalculationParameters(window: currentWindow, visibleFrameOfScreen: hotSpot.screen.adjustedVisibleFrame(ignoreTodo), action: hotSpot.action, lastAction: nil)
-            let rectResult = calculation.calculateRect(rectCalcParams)
-            
-            let gapsApplicable = hotSpot.action.gapsApplicable
-            
-            if Defaults.gapSize.value > 0, gapsApplicable != .none {
-                let gapSharedEdges = rectResult.subAction?.gapSharedEdge ?? hotSpot.action.gapSharedEdge
-
-                return GapCalculation.applyGaps(rectResult.rect, dimension: gapsApplicable, sharedEdges: gapSharedEdges, gapSize: Defaults.gapSize.value)
-            }
-            
-            return rectResult.rect
-        }
-        return nil
-    }
-    
-    func snapAreaContainingCursor(priorSnapArea: SnapArea?) -> SnapArea? {
-        let loc = NSEvent.mouseLocation
-        
-        for screen in NSScreen.screens {
-            guard let directional = directionalLocationOfCursor(loc: loc, screen: screen)
-            else { continue }
-            
-            if let windowId = windowId, Defaults.todo.userEnabled && Defaults.todoMode.enabled && TodoManager.isTodoWindow(windowId) {
-                if Defaults.todoSidebarSide.value == .left && directional == .l {
-                    return SnapArea(screen: screen, directional: directional, action: .leftTodo)
-                }
-                if Defaults.todoSidebarSide.value == .right && directional == .r {
-                    return SnapArea(screen: screen, directional: directional, action: .rightTodo)
-                }
-            }
-            
-            let orientation: DisplayOrientation = screen.frame.isLandscape ? .landscape : .portrait
-            let config = SnapAreaModel.instance.snapAreas(for: orientation, displayUUID: screen.displayUUIDString)[directional]
-            
-            if let action = config?.action {
-                return SnapArea(screen: screen, directional: directional, action: action)
-            }
-            if let compound = config?.compound {
-                return compound.calculation.snapArea(cursorLocation: loc, screen: screen, directional: directional, priorSnapArea: priorSnapArea)
-            }
-        }
-        
-        return nil
-    }
-    
-    func directionalLocationOfCursor(loc: NSPoint, screen: NSScreen) -> Directional? {
-        let frame = screen.frame
-        let cornerSize = Defaults.cornerSnapAreaSize.cgFloat
-        
-        /// cgrect contains doesn't include max edges, so manually compare
-        guard loc.x >= frame.minX,
-              loc.x <= frame.maxX,
-              loc.y >= frame.minY,
-              loc.y <= frame.maxY
-        else { return nil }
-        
-        if loc.x < frame.minX + marginLeft + cornerSize {
-            if loc.y >= frame.maxY - marginTop - cornerSize {
-                return .tl
-            }
-            if loc.y <= frame.minY + marginBottom + cornerSize {
-                return .bl
-            }
-            if loc.x < frame.minX + marginLeft {
-                return .l
-            }
-        }
-        
-        if loc.x > frame.maxX - marginRight - cornerSize {
-            if loc.y >= frame.maxY - marginTop - cornerSize {
-                return .tr
-            }
-            if loc.y <= frame.minY + marginBottom + cornerSize {
-                return .br
-            }
-            if loc.x > frame.maxX - marginRight {
-                return .r
-            }
-        }
-        
-        if loc.y > frame.maxY - marginTop {
-            return .t
-        }
-        if loc.y < frame.minY + marginBottom {
-            return .b
-        }
-        
-        return nil
     }
 }

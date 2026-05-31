@@ -12,7 +12,7 @@
 //  edge is already at the grid boundary. For anything else it returns false untouched.
 //
 //  This path is purely additive: the new shortcuts don't override existing behavior,
-//  so unlike the drag path it is NOT gated by `Defaults.gridModeEnabled`.
+//  so unlike the drag path it is NOT gated by the grid activation modifier.
 //
 //  COORDINATE SPACE: the window frame from AccessibilityElement is top-left (AX)
 //  space. `GridCalculation` works in Cocoa bottom-left within the screen's

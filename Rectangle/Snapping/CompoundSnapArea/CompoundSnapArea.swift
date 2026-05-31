@@ -6,7 +6,16 @@
 //  Copyright © 2022 Ryan Hanson. All rights reserved.
 //
 
-import Foundation
+import Cocoa
+
+// Relocated here from SnappingManager.swift during the M16 grid cutover: the
+// classic edge-snap DRAG path that used to own this type was removed, but the
+// CompoundSnapArea calculations (kept until M17) still return it. Moves verbatim.
+struct SnapArea: Equatable {
+    let screen: NSScreen
+    let directional: Directional
+    let action: WindowAction
+}
 
 enum CompoundSnapArea: Int, Codable {
     

@@ -82,7 +82,6 @@ class GridLayoutModelTests: XCTestCase {
     /// with no compile error — so assert the new keys are present.
     func testGridDefaultsRegisteredInArray() {
         let keys = Defaults.array.map { $0.key }
-        XCTAssertTrue(keys.contains("gridModeEnabled"))
         XCTAssertTrue(keys.contains("gridLayoutsByDisplay"))
         XCTAssertTrue(keys.contains("gridActivationModifier"))
         XCTAssertTrue(keys.contains("gridSpanModifier"))

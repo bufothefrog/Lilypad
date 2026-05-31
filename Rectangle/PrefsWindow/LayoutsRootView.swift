@@ -211,8 +211,6 @@ struct LayoutsRootView: View {
         VStack(alignment: .leading, spacing: Metrics.rowSpacing) {
             sectionHeader(NSLocalizedString("Grid Behavior", tableName: "Main", value: "Grid Behavior", comment: "Grid settings header"))
 
-            Toggle(NSLocalizedString("Enable grid mode", tableName: "Main", value: "Enable grid mode", comment: ""), isOn: $model.gridModeEnabled)
-
             settingRow(NSLocalizedString("Activation modifier", tableName: "Main", value: "Activation modifier", comment: "")) {
                 modifierPicker(get: { model.activationModifierRaw }, set: { model.activationModifierRaw = $0 })
             }
