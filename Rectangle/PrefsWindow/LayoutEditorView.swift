@@ -76,13 +76,6 @@ struct LayoutEditorView: View {
     /// a neutral note. Errors use the system warning tint; otherwise secondary.
     @State private var feedbackIsError: Bool = false
 
-    /// True while the pointer is over the TOP gutter — shows the per-column "+"
-    /// affordances that insert a new column divider at a column's midpoint.
-    @State private var hoveringColumnAdd: Bool = false
-    /// True while the pointer is over the LEFT gutter — shows the per-row "+"
-    /// affordances that insert a new row divider at a row's midpoint.
-    @State private var hoveringRowAdd: Bool = false
-
     /// The selected monitor's pixel size (point size × backing scale), resolved
     /// once at init from the connected `NSScreen` if available.
     private let pixelSize: CGSize
@@ -180,9 +173,6 @@ struct LayoutEditorView: View {
                 columnRatioFields(canvas: canvas)
                 // Per-row ratio fields, centered beside each row track.
                 rowRatioFields(canvas: canvas)
-                // Hover-to-insert affordances over the top + left gutters.
-                columnAddAffordances(canvas: canvas)
-                rowAddAffordances(canvas: canvas)
                 // The canvas itself.
                 canvasBody(canvas: CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height))
                     .frame(width: canvas.width, height: canvas.height)
@@ -190,72 +180,6 @@ struct LayoutEditorView: View {
             }
         }
         .frame(minHeight: 280)
-    }
-
-    // MARK: - Hover-to-insert add affordances
-
-    /// The TOP-gutter hover zone (spanning the canvas width) plus a "+" centered
-    /// over EACH column track; the +'s appear only while hovering. Clicking the +
-    /// for column `k` inserts a new column divider at that column's MIDPOINT,
-    /// splitting it in two. Positioned in the SAME coordinate space as the
-    /// per-column ratio fields (track midpoint × canvas width), so the +'s line up
-    /// with the tracks.
-    @ViewBuilder
-    private func columnAddAffordances(canvas: CGRect) -> some View {
-        // A transparent strip over the top gutter (above the canvas, across its
-        // width) drives the hover flag.
-        Rectangle()
-            .fill(Color.clear)
-            .contentShape(Rectangle())
-            .frame(width: canvas.width, height: colFieldGutter)
-            .position(x: canvas.midX, y: colFieldGutter / 2)
-            .onHover { hoveringColumnAdd = $0 }
-        if hoveringColumnAdd {
-            ForEach(0..<working.cols, id: \.self) { k in
-                let mid = (working.colBoundaries[k] + working.colBoundaries[k + 1]) / 2
-                let x = canvas.minX + CGFloat(mid) * canvas.width
-                addButton { insertColumn(splittingTrack: k) }
-                    .position(x: x, y: colFieldGutter / 2)
-                    .onHover { hoveringColumnAdd = hoveringColumnAdd || $0 }
-            }
-        }
-    }
-
-    /// The LEFT-gutter hover zone (spanning the canvas height) plus a "+" centered
-    /// beside EACH row track; the +'s appear only while hovering. Clicking row
-    /// `k`'s + inserts a row divider at that row's MIDPOINT. Row 0 is the TOP row
-    /// and `rowBoundaries` are from the top, so the y is the midpoint fraction ×
-    /// canvas height (NO flip) — matching `rowRatioFields` / `rowHandle`.
-    @ViewBuilder
-    private func rowAddAffordances(canvas: CGRect) -> some View {
-        Rectangle()
-            .fill(Color.clear)
-            .contentShape(Rectangle())
-            .frame(width: rowFieldGutter, height: canvas.height)
-            .position(x: rowFieldGutter / 2, y: canvas.midY)
-            .onHover { hoveringRowAdd = $0 }
-        if hoveringRowAdd {
-            ForEach(0..<working.rows, id: \.self) { k in
-                let mid = (working.rowBoundaries[k] + working.rowBoundaries[k + 1]) / 2
-                let y = canvas.minY + CGFloat(mid) * canvas.height
-                addButton { insertRow(splittingTrack: k) }
-                    .position(x: rowFieldGutter / 2, y: y)
-                    .onHover { hoveringRowAdd = hoveringRowAdd || $0 }
-            }
-        }
-    }
-
-    /// A small circular "+" button used by the hover-insert affordances.
-    private func addButton(_ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text("+")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.white)
-                .frame(width: 18, height: 18)
-                .background(Circle().fill(Color.accentColor))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .help(NSLocalizedString("Add a divider here", tableName: "Main", value: "Add a divider here", comment: "Hover-insert add button tooltip"))
     }
 
     // MARK: - Per-track ratio fields
@@ -443,11 +367,10 @@ struct LayoutEditorView: View {
     private var dividersSection: some View {
         editorGroupBox(NSLocalizedString("Dividers", tableName: "Main", value: "Dividers", comment: "Dividers section header")) {
             HStack(spacing: 8) {
+                Button(NSLocalizedString("Add Column", tableName: "Main", value: "Add Column", comment: "")) { addColumn() }
+                Button(NSLocalizedString("Add Row", tableName: "Main", value: "Add Row", comment: "")) { addRow() }
                 Button(NSLocalizedString("Remove Divider", tableName: "Main", value: "Remove Divider", comment: "")) { removeSelectedDivider() }
                     .disabled(selectedDivider == nil)
-                Text(NSLocalizedString("Hover an edge of the canvas to add a divider.", tableName: "Main", value: "Hover an edge of the canvas to add a divider.", comment: "Hover-to-insert hint"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
                 Spacer()
             }
         }
@@ -661,12 +584,9 @@ struct LayoutEditorView: View {
 
     // MARK: - Edit actions (all run a pure op on `working`)
 
-    /// Insert a new column divider at the MIDPOINT of column track `k` (hover-insert
-    /// "+"), splitting that column in two via `addingColumnBoundary`. Clears the
-    /// divider selection / feedback on success, as the removed Add buttons did.
-    private func insertColumn(splittingTrack k: Int) {
-        guard k >= 0, k + 1 < working.colBoundaries.count else { return }
-        let mid = (working.colBoundaries[k] + working.colBoundaries[k + 1]) / 2
+    /// Add a new column by splitting the widest column down the middle.
+    private func addColumn() {
+        guard let mid = midpointOfLargestGap(working.colBoundaries) else { return }
         if let next = working.addingColumnBoundary(at: mid) {
             working = next
             resetSelectionAfterStructuralEdit()
@@ -676,12 +596,9 @@ struct LayoutEditorView: View {
         }
     }
 
-    /// Insert a new row divider at the MIDPOINT of row track `k` (hover-insert "+"),
-    /// splitting that row in two via `addingRowBoundary`. Rows are measured from the
-    /// top (no flip).
-    private func insertRow(splittingTrack k: Int) {
-        guard k >= 0, k + 1 < working.rowBoundaries.count else { return }
-        let mid = (working.rowBoundaries[k] + working.rowBoundaries[k + 1]) / 2
+    /// Add a new row by splitting the tallest row down the middle.
+    private func addRow() {
+        guard let mid = midpointOfLargestGap(working.rowBoundaries) else { return }
         if let next = working.addingRowBoundary(at: mid) {
             working = next
             resetSelectionAfterStructuralEdit()
@@ -689,6 +606,22 @@ struct LayoutEditorView: View {
         } else {
             showError(NSLocalizedString("Could not add a row there.", tableName: "Main", value: "Could not add a row there.", comment: ""))
         }
+    }
+
+    /// Midpoint fraction of the largest gap between consecutive boundaries (the
+    /// widest track), used by Add Column / Add Row to split it in half.
+    private func midpointOfLargestGap(_ boundaries: [Double]) -> Double? {
+        guard boundaries.count >= 2 else { return nil }
+        var bestMid: Double? = nil
+        var bestGap = -1.0
+        for i in 1..<boundaries.count {
+            let gap = boundaries[i] - boundaries[i - 1]
+            if gap > bestGap {
+                bestGap = gap
+                bestMid = (boundaries[i] + boundaries[i - 1]) / 2
+            }
+        }
+        return bestMid
     }
 
     private func removeSelectedDivider() {
