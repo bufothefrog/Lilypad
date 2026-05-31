@@ -19,18 +19,22 @@
 //  display is connected, falling back to a point readout (scale 1) for a
 //  disconnected display whose backing scale we can't query.
 //
-//  RATIOS: as a precise alternative to dragging dividers the user can type an
-//  axis ratio like "1:2:1" (=> 25/50/25) into the Column / Row ratio fields.
-//  Each commit runs the pure `settingColumnRatios` / `settingRowRatios` op on the
-//  working copy; the field shows the CURRENT ratios via `currentColumn/RowRatioString`.
+//  RATIOS (per-track fields): as a precise alternative to dragging dividers, a
+//  small number field sits ABOVE each column and to the LEFT of each row, each
+//  aligned to the actual (possibly non-uniform) track center computed from
+//  `colBoundaries` / `rowBoundaries` inside the canvas `GeometryReader`, so the
+//  fields line up with the tracks and re-align live when a divider is dragged or
+//  the grid resizes. Each field shows that track's current proportion (from
+//  `currentColumnRatios` / `currentRowRatios`, normalized to small integers). On
+//  commit it resizes ONLY that track via the pure `settingColumnRatio(atIndex:to:)`
+//  / `settingRowRatio(atIndex:to:)` ops (same track count -> merges preserved).
 //  Invalid input (empty / non-numeric / zero / negative) is a no-op with inline
-//  feedback. Changing the track COUNT on an axis resets that axis's merges (the
-//  pure op rebuilds an identity grid — documented in ZoneLayoutEditor.swift).
+//  feedback.
 //
-//  NATIVE LOOK: the sheet is grouped into labeled `GroupBox` sections (Layout
-//  ratios, Dividers, Zones), uses standard system controls + fonts + spacing, a
-//  subtle native divider/handle styling, and a proper bottom-trailing button bar
-//  (Cancel = .cancelAction/Esc, Save = the default button via .defaultAction/Return).
+//  NATIVE LOOK: the sheet uses standard system controls + fonts + spacing, a
+//  subtle native divider/handle styling, labeled `GroupBox` sections (Dividers,
+//  Zones), and a proper bottom-trailing button bar (Cancel = .cancelAction/Esc,
+//  Save = the default button via .defaultAction/Return).
 //
 //  AVAILABILITY: deployment target is 10.15, so this view avoids 11+ SwiftUI
 //  API (`Menu` / `Label` / `Image(systemName:)`); it uses `GeometryReader`,
@@ -110,7 +114,6 @@ struct LayoutEditorView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             canvasContainer
-            ratiosSection
             dividersSection
             zonesSection
             feedbackBar
@@ -120,6 +123,16 @@ struct LayoutEditorView: View {
         .padding(20)
         .frame(minWidth: 580, minHeight: 600)
     }
+
+    // MARK: - Per-track ratio strip geometry
+
+    /// Width of the left gutter holding the per-ROW ratio fields.
+    private let rowFieldGutter: CGFloat = 52
+    /// Height of the top gutter holding the per-COLUMN ratio fields.
+    private let colFieldGutter: CGFloat = 26
+    /// Size of one small ratio number field.
+    private let ratioFieldWidth: CGFloat = 44
+    private let ratioFieldHeight: CGFloat = 20
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -140,17 +153,81 @@ struct LayoutEditorView: View {
     // MARK: - Canvas
 
     private var canvasContainer: some View {
-        // Fit the monitor's aspect ratio inside the available space.
+        // Reserve a top gutter for the per-column ratio fields and a left gutter
+        // for the per-row ratio fields; fit the monitor's aspect ratio inside the
+        // remaining space. The ratio fields are positioned in the SAME coordinate
+        // space as the canvas (offset by the gutters) so they line up with the
+        // actual track centers — even non-uniform ones — and re-align live.
         GeometryReader { geo in
-            let canvas = LayoutEditorView.fittedRect(aspect: pixelSize, in: geo.size)
+            let canvasArea = CGSize(width: max(geo.size.width - rowFieldGutter, 1),
+                                    height: max(geo.size.height - colFieldGutter, 1))
+            let fitted = LayoutEditorView.fittedRect(aspect: pixelSize, in: canvasArea)
+            // The canvas origin in the GeometryReader's space (shifted past the gutters).
+            let canvasOriginX = rowFieldGutter + fitted.minX
+            let canvasOriginY = colFieldGutter + fitted.minY
+            let canvas = CGRect(x: canvasOriginX, y: canvasOriginY, width: fitted.width, height: fitted.height)
+
             ZStack(alignment: .topLeading) {
                 Color.clear
-                canvasBody(canvas: canvas)
+                // Per-column ratio fields, centered over each column track.
+                columnRatioFields(canvas: canvas)
+                // Per-row ratio fields, centered beside each row track.
+                rowRatioFields(canvas: canvas)
+                // The canvas itself.
+                canvasBody(canvas: CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height))
                     .frame(width: canvas.width, height: canvas.height)
                     .offset(x: canvas.minX, y: canvas.minY)
             }
         }
         .frame(minHeight: 280)
+    }
+
+    // MARK: - Per-track ratio fields
+
+    /// One small number field horizontally CENTERED over each column track, in the
+    /// gutter above the canvas. Each field's x-center is the midpoint of that
+    /// column's boundaries — `(colBoundaries[i] + colBoundaries[i+1]) / 2` × canvas
+    /// width — so non-uniform columns get their fields placed correctly and the
+    /// fields re-align whenever a divider drag changes the boundaries.
+    @ViewBuilder
+    private func columnRatioFields(canvas: CGRect) -> some View {
+        let ratios = trackIntegerRatios(working.currentColumnRatios)
+        ForEach(0..<working.cols, id: \.self) { i in
+            let mid = (working.colBoundaries[i] + working.colBoundaries[i + 1]) / 2
+            let x = canvas.minX + CGFloat(mid) * canvas.width
+            TrackRatioField(value: ratios[i], onCommit: { applyColumnRatio(atIndex: i, $0) })
+                .frame(width: ratioFieldWidth, height: ratioFieldHeight)
+                .position(x: x, y: colFieldGutter / 2)
+        }
+    }
+
+    /// One small number field vertically CENTERED beside each row track, in the
+    /// gutter left of the canvas. Row 0 is the TOP, and `rowBoundaries` are
+    /// measured from the top, so the y-center is simply the midpoint fraction ×
+    /// canvas height (no flip), matching the canvas's own row layout.
+    @ViewBuilder
+    private func rowRatioFields(canvas: CGRect) -> some View {
+        let ratios = trackIntegerRatios(working.currentRowRatios)
+        ForEach(0..<working.rows, id: \.self) { i in
+            let mid = (working.rowBoundaries[i] + working.rowBoundaries[i + 1]) / 2
+            let y = canvas.minY + CGFloat(mid) * canvas.height
+            TrackRatioField(value: ratios[i], onCommit: { applyRowRatio(atIndex: i, $0) })
+                .frame(width: ratioFieldWidth, height: ratioFieldHeight)
+                .position(x: rowFieldGutter / 2, y: y)
+        }
+    }
+
+    /// Reduce raw fractional track proportions to small whole-number labels for the
+    /// fields, reusing the same display reduction as the ratio strings (so a
+    /// 25/50/25 split shows `1`, `2`, `1`). Falls back to a one-decimal value when
+    /// no clean small-integer ratio fits. The returned array is aligned 1:1 with
+    /// the tracks.
+    private func trackIntegerRatios(_ proportions: [Double]) -> [String] {
+        let string = ZoneLayout.ratioString(from: proportions)
+        let parts = string.split(separator: ":").map(String.init)
+        if parts.count == proportions.count { return parts }
+        // Fallback: a direct proportional readout if the string didn't split 1:1.
+        return proportions.map { String(format: "%.2g", $0) }
     }
 
     private func canvasBody(canvas: CGRect) -> some View {
@@ -280,44 +357,6 @@ struct LayoutEditorView: View {
             .onTapGesture { selectedDivider = DividerRef(axis: .row, index: index) }
     }
 
-    // MARK: - Ratios section
-
-    /// Type-in column / row ratios, the precise alternative to dragging dividers.
-    /// Shows the current ratios; commits via the pure ratio ops on Return / focus
-    /// loss. Invalid input is a no-op with inline feedback.
-    private var ratiosSection: some View {
-        editorGroupBox(NSLocalizedString("Layout Ratios", tableName: "Main", value: "Layout Ratios", comment: "Ratio inputs section header")) {
-            VStack(alignment: .leading, spacing: 8) {
-                ratioRow(
-                    label: NSLocalizedString("Columns", tableName: "Main", value: "Columns", comment: "Column ratios field label"),
-                    current: working.currentColumnRatioString,
-                    onCommit: { applyColumnRatios($0) }
-                )
-                ratioRow(
-                    label: NSLocalizedString("Rows", tableName: "Main", value: "Rows", comment: "Row ratios field label"),
-                    current: working.currentRowRatioString,
-                    onCommit: { applyRowRatios($0) }
-                )
-                Text(NSLocalizedString("Type proportions like \u{201C}1:2:1\u{201D}. Changing the number of tracks resets that axis\u{2019}s merges.", tableName: "Main", value: "Type proportions like \u{201C}1:2:1\u{201D}. Changing the number of tracks resets that axis\u{2019}s merges.", comment: "Ratio field help"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    private func ratioRow(label: String, current: String, onCommit: @escaping (String) -> Void) -> some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .frame(width: 70, alignment: .leading)
-            // A self-seeding field: it re-reads `current` whenever the working
-            // layout's ratios change (via `.id`), so dragging a divider updates
-            // the displayed ratio, and a rejected commit snaps back.
-            RatioField(current: current, onCommit: onCommit)
-                .frame(maxWidth: 200, alignment: .leading)
-            Spacer()
-        }
-    }
-
     // MARK: - Dividers section
 
     private var dividersSection: some View {
@@ -438,38 +477,78 @@ struct LayoutEditorView: View {
         feedbackIsError = false
     }
 
-    // MARK: - Ratio actions
+    // MARK: - Per-track ratio actions
 
-    /// Apply a typed COLUMN ratio string (e.g. "1:2:1"). Parses, then runs the
-    /// pure `settingColumnRatios`. Invalid input is a no-op with inline feedback.
-    private func applyColumnRatios(_ string: String) {
-        guard let ratios = ZoneLayout.parseRatios(string) else {
-            showError(NSLocalizedString("Enter positive numbers like \u{201C}1:2:1\u{201D}.", tableName: "Main", value: "Enter positive numbers like \u{201C}1:2:1\u{201D}.", comment: "Invalid ratio input"))
+    /// Commit a typed number into the COLUMN ratio field at `index`: resize ONLY
+    /// that column, keeping every other column's proportion (and all merges, since
+    /// the track count is unchanged). The base ratio array is the DISPLAYED
+    /// small-integer ratios — what the fields show — with `index` replaced by the
+    /// entered value, so "type 2 into a field showing 1" gives the intuitive 2:1:1
+    /// rather than weighting against the raw fractional widths. The same-count
+    /// `settingColumnRatios` path repositions boundaries and preserves merges.
+    /// Invalid input (empty / non-numeric / non-positive) is a no-op with inline
+    /// feedback; the boundaries change but not the track count, so the selection
+    /// stays valid and is preserved.
+    private func applyColumnRatio(atIndex index: Int, _ string: String) {
+        guard let value = parsePositiveNumber(string) else {
+            showError(invalidNumberMessage)
             return
         }
+        let base = displayRatios(working.currentColumnRatios)
+        guard index >= 0, index < base.count else { return }
+        var ratios = base
+        ratios[index] = value
         guard let next = working.settingColumnRatios(ratios) else {
-            showError(NSLocalizedString("Couldn\u{2019}t apply those column ratios.", tableName: "Main", value: "Couldn\u{2019}t apply those column ratios.", comment: "Ratio apply failed"))
+            showError(NSLocalizedString("Couldn\u{2019}t apply that column size.", tableName: "Main", value: "Couldn\u{2019}t apply that column size.", comment: "Per-track ratio apply failed"))
             return
         }
         clearFeedback()
         working = next
-        // A track-count change rebuilds zones, so stale selection must drop.
-        resetSelectionAfterStructuralEdit()
     }
 
-    /// Apply a typed ROW ratio string. Same contract as `applyColumnRatios`.
-    private func applyRowRatios(_ string: String) {
-        guard let ratios = ZoneLayout.parseRatios(string) else {
-            showError(NSLocalizedString("Enter positive numbers like \u{201C}1:2:1\u{201D}.", tableName: "Main", value: "Enter positive numbers like \u{201C}1:2:1\u{201D}.", comment: "Invalid ratio input"))
+    /// Commit a typed number into the ROW ratio field at `index`. Same contract as
+    /// `applyColumnRatio`, on the row axis.
+    private func applyRowRatio(atIndex index: Int, _ string: String) {
+        guard let value = parsePositiveNumber(string) else {
+            showError(invalidNumberMessage)
             return
         }
+        let base = displayRatios(working.currentRowRatios)
+        guard index >= 0, index < base.count else { return }
+        var ratios = base
+        ratios[index] = value
         guard let next = working.settingRowRatios(ratios) else {
-            showError(NSLocalizedString("Couldn\u{2019}t apply those row ratios.", tableName: "Main", value: "Couldn\u{2019}t apply those row ratios.", comment: "Ratio apply failed"))
+            showError(NSLocalizedString("Couldn\u{2019}t apply that row size.", tableName: "Main", value: "Couldn\u{2019}t apply that row size.", comment: "Per-track ratio apply failed"))
             return
         }
         clearFeedback()
         working = next
-        resetSelectionAfterStructuralEdit()
+    }
+
+    /// Parse a single positive finite number from a field's text. Returns `nil`
+    /// for empty / non-numeric / zero / negative input (the no-op case).
+    private func parsePositiveNumber(_ string: String) -> Double? {
+        let trimmed = string.trimmingCharacters(in: .whitespaces)
+        guard let value = Double(trimmed), value.isFinite, value > 0 else { return nil }
+        return value
+    }
+
+    /// The base ratio array used when committing one field — the SAME values the
+    /// fields display (the small-integer reduction via `trackIntegerRatios`),
+    /// parsed back to numbers, so editing one field is consistent with the shown
+    /// numbers. Falls back to the raw proportions if the displayed labels don't
+    /// parse 1:1 (e.g. a decimal fallback readout).
+    private func displayRatios(_ proportions: [Double]) -> [Double] {
+        let labels = trackIntegerRatios(proportions)
+        let parsed = labels.compactMap { Double($0) }
+        if parsed.count == proportions.count, parsed.allSatisfy({ $0 > 0 }) {
+            return parsed
+        }
+        return proportions
+    }
+
+    private var invalidNumberMessage: String {
+        NSLocalizedString("Enter a positive number.", tableName: "Main", value: "Enter a positive number.", comment: "Invalid per-track ratio input")
     }
 
     // MARK: - Edit actions (all run a pure op on `working`)
@@ -598,33 +677,35 @@ struct LayoutEditorView: View {
     }
 }
 
-// MARK: - Ratio text field
+// MARK: - Per-track ratio field
 
-/// A single-line ratio editor that keeps the in-progress text in its OWN local
-/// `@State` and only reports a final value through `onCommit` (Return / focus
-/// loss), mirroring `LayoutNameField`. It re-seeds its text from the committed
-/// `current` value (via `.id(current)`) whenever the working layout's ratios
-/// change externally — e.g. after a divider drag updates the proportions, or a
-/// rejected invalid commit snaps the field back to the current ratios.
+/// A single small number field for ONE column or row track. It keeps the
+/// in-progress text in its OWN local `@State` and only reports a final value
+/// through `onCommit` (Return / focus loss), mirroring `LayoutNameField`. It
+/// re-seeds its text from the committed `value` (via `.id(value)`) whenever the
+/// working layout's proportions change externally — e.g. after a divider drag
+/// updates the proportions, or a rejected invalid commit snaps the field back to
+/// the current value.
 ///
 /// `TextField(_:text:onCommit:)` and `RoundedBorderTextFieldStyle` are both
 /// available at the 10.15 deployment target.
-private struct RatioField: View {
-    let current: String
+private struct TrackRatioField: View {
+    let value: String
     let onCommit: (String) -> Void
 
     @State private var text: String
 
-    init(current: String, onCommit: @escaping (String) -> Void) {
-        self.current = current
+    init(value: String, onCommit: @escaping (String) -> Void) {
+        self.value = value
         self.onCommit = onCommit
-        _text = State(initialValue: current)
+        _text = State(initialValue: value)
     }
 
     var body: some View {
-        TextField("1:2:1", text: $text, onCommit: { onCommit(text) })
+        TextField("", text: $text, onCommit: { onCommit(text) })
             .textFieldStyle(RoundedBorderTextFieldStyle())
-            .font(.system(.body, design: .monospaced))
-            .id(current)
+            .font(.system(size: 11, design: .monospaced))
+            .multilineTextAlignment(.center)
+            .id(value)
     }
 }

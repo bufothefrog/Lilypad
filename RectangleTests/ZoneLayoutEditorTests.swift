@@ -639,6 +639,84 @@ class ZoneLayoutRatioTests: XCTestCase {
         assertValid(reset)
     }
 
+    // MARK: settingColumnRatio / settingRowRatio (single-track resize)
+
+    func testSettingColumnRatioReplacesOneTrackKeepingOthers() {
+        // Uniform 3-col grid: each column's CURRENT proportion is 1/3. Replacing
+        // the middle track's weight with the literal 2 gives [1/3, 2, 1/3] (the
+        // other tracks keep their 1/3 weight), which normalizes to 1:6:1.
+        let base = ZoneLayout.uniform(cols: 3, rows: 1, id: "u", name: "u")
+        let result = base.settingColumnRatio(atIndex: 1, to: 2)!
+        assertValid(result)
+        XCTAssertEqual(result.cols, 3)  // track count unchanged
+        XCTAssertEqual(result.currentColumnRatioString, "1:6:1")
+    }
+
+    func testSettingColumnRatioKeepsMerges() {
+        // merged3x2 has the two TOP cells merged (zone 0). A same-count single-track
+        // resize must preserve that merge (settingColumnRatios same-count path).
+        let result = merged3x2().settingColumnRatio(atIndex: 0, to: 2)!
+        assertValid(result)
+        XCTAssertEqual(result.cellZones, merged3x2().cellZones)  // merge untouched
+        XCTAssertTrue(result.canMerge([0]))
+    }
+
+    func testSettingRowRatioReplacesOneTrackKeepingOthers() {
+        // Each row's current proportion is 1/3; replacing the last with literal 2
+        // gives [1/3, 1/3, 2] => normalized 1:1:6.
+        let base = ZoneLayout.uniform(cols: 1, rows: 3, id: "u", name: "u")
+        let result = base.settingRowRatio(atIndex: 2, to: 2)!
+        assertValid(result)
+        XCTAssertEqual(result.rows, 3)
+        XCTAssertEqual(result.currentRowRatioString, "1:1:6")
+    }
+
+    func testSettingTrackRatioRejectsNonPositive() {
+        let base = ZoneLayout.uniform(cols: 3, rows: 2, id: "u", name: "u")
+        XCTAssertNil(base.settingColumnRatio(atIndex: 0, to: 0))
+        XCTAssertNil(base.settingColumnRatio(atIndex: 0, to: -1))
+        XCTAssertNil(base.settingColumnRatio(atIndex: 0, to: .nan))
+        XCTAssertNil(base.settingColumnRatio(atIndex: 0, to: .infinity))
+        XCTAssertNil(base.settingRowRatio(atIndex: 0, to: 0))
+        XCTAssertNil(base.settingRowRatio(atIndex: 0, to: -2))
+    }
+
+    func testSettingTrackRatioRejectsOutOfRangeIndex() {
+        let base = ZoneLayout.uniform(cols: 3, rows: 2, id: "u", name: "u")
+        XCTAssertNil(base.settingColumnRatio(atIndex: -1, to: 1))
+        XCTAssertNil(base.settingColumnRatio(atIndex: 3, to: 1))   // cols == 3 -> valid 0..2
+        XCTAssertNil(base.settingRowRatio(atIndex: 2, to: 1))      // rows == 2 -> valid 0..1
+    }
+
+    func testSettingTrackRatioRoundTripFromCurrentIsNoOp() {
+        // Re-applying a track's CURRENT proportion should leave the layout valid
+        // and unchanged in track count, preserving merges.
+        let base = merged3x2()
+        let current = base.currentColumnRatios[1]
+        let result = base.settingColumnRatio(atIndex: 1, to: current)!
+        assertValid(result)
+        XCTAssertEqual(result.cols, base.cols)
+        XCTAssertEqual(result.cellZones, base.cellZones)
+        for i in 0..<result.colBoundaries.count {
+            XCTAssertEqual(result.colBoundaries[i], base.colBoundaries[i], accuracy: eps)
+        }
+    }
+
+    func testSettingTrackRatioOnlyMovesNeighborBoundaries() {
+        // On a 4-col uniform grid, resizing column 1 should leave the OUTER edges
+        // (0 and 1) fixed and keep boundaries ascending; only interior boundaries
+        // shift. Verifies it's a proportional re-layout, not a rebuild.
+        let base = ZoneLayout.uniform(cols: 4, rows: 1, id: "u", name: "u")
+        let result = base.settingColumnRatio(atIndex: 1, to: 3)!
+        assertValid(result)
+        XCTAssertEqual(result.cols, 4)
+        XCTAssertEqual(result.colBoundaries.first!, 0, accuracy: eps)
+        XCTAssertEqual(result.colBoundaries.last!, 1, accuracy: eps)
+        // current fractional weights [1/4,1/4,1/4,1/4]; replacing index 1 with the
+        // literal 3 gives [1/4, 3, 1/4, 1/4] => normalized 1:12:1:1.
+        XCTAssertEqual(result.currentColumnRatioString, "1:12:1:1")
+    }
+
     // MARK: invariants hold for an end-to-end ratio edit on a merged grid
 
     func testRatioEditPreservesInvariantsAcrossAxes() {

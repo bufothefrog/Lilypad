@@ -19,9 +19,12 @@
 //
 //  AVAILABILITY: the deployment target is 10.15, so this view sticks to SwiftUI API
 //  available there — no `Menu` / `Label` / `Image(systemName:)` / `.help` (all
-//  11+). The Add control is a self-resetting `Picker` (which renders as a popup on
-//  macOS); the active marker is a drawn `Circle`. The only 11+ API used is
-//  `ColorPicker`, gated with `#available` and degraded to a label on 10.15.
+//  11+). The Add control is a `Button` that presents a `.popover` containing a
+//  hover-to-pick grid (like a word processor's "insert table"): moving the pointer
+//  over the grid highlights an N × M region (via `onHover`, available at 10.15) and
+//  clicking creates a uniform N × M layout. The active marker is a drawn `Circle`.
+//  The only 11+ API used is `ColorPicker`, gated with `#available` and degraded to
+//  a label on 10.15.
 //
 
 import SwiftUI
@@ -32,9 +35,8 @@ struct LayoutsRootView: View {
     // — and thus the model — alive for the pane's lifetime.
     @ObservedObject private var model = GridSettingsModel()
 
-    // Transient selection backing the self-resetting "Add" popup. `nil` is the
-    // visible placeholder; choosing a starter fires the add and resets to `nil`.
-    @State private var pendingStarter: QuickStarter? = nil
+    // Whether the hover-to-pick "Add" grid popover is showing.
+    @State private var addPopoverShown = false
 
     // The layout currently open in the FancyZones editor sheet (M15). `nil` =
     // no sheet. Identifiable so `.sheet(item:)` (10.15) drives presentation.
@@ -92,7 +94,7 @@ struct LayoutsRootView: View {
             HStack {
                 sectionHeader(NSLocalizedString("Layouts", tableName: "Main", value: "Layouts", comment: "Layouts pane: layouts list header"))
                 Spacer()
-                addPicker
+                addButton
             }
             if model.selectedDisplayUUID == nil {
                 Text(NSLocalizedString("Select a monitor to configure its layouts.", tableName: "Main", value: "Select a monitor to configure its layouts.", comment: "No monitor selected"))
@@ -112,27 +114,20 @@ struct LayoutsRootView: View {
         }
     }
 
-    /// Self-resetting popup that acts as an "Add" menu. Choosing a starter adds it
-    /// and resets the selection to the `nil` placeholder.
-    private var addPicker: some View {
-        Picker(selection: Binding(
-            get: { pendingStarter },
-            set: { newValue in
-                if let starter = newValue {
-                    model.addLayout(starter)
-                }
-                pendingStarter = nil
-            }
-        ), label: EmptyView()) {
-            Text(NSLocalizedString("Add…", tableName: "Main", value: "Add…", comment: "Add layout placeholder"))
-                .tag(QuickStarter?.none)
-            ForEach(QuickStarter.allCases) { starter in
-                Text(starter.label).tag(QuickStarter?.some(starter))
+    /// The "Add…" button. Tapping it opens a `.popover` with a hover-to-pick grid
+    /// (insert-table style): the user hovers to choose an N × M size and clicks to
+    /// create a uniform layout of that size. Disabled until a monitor is selected.
+    private var addButton: some View {
+        Button(NSLocalizedString("Add…", tableName: "Main", value: "Add…", comment: "Add layout button")) {
+            addPopoverShown = true
+        }
+        .disabled(model.selectedDisplayUUID == nil)
+        .popover(isPresented: $addPopoverShown, arrowEdge: .bottom) {
+            AddGridPicker { cols, rows in
+                model.addUniformLayout(cols: cols, rows: rows)
+                addPopoverShown = false
             }
         }
-        .labelsHidden()
-        .frame(width: 120)
-        .disabled(model.selectedDisplayUUID == nil)
     }
 
     private func layoutRow(_ layout: ZoneLayout) -> some View {
@@ -327,5 +322,92 @@ private struct LayoutNameField: View {
             // Re-create (and thus re-seed `text`) when the committed name changes
             // externally, including a rejected blank rename snapping back.
             .id(name)
+    }
+}
+
+// MARK: - Hover-to-pick Add grid
+
+/// A small "insert table" style grid of square cells (up to `maxCols` × `maxRows`).
+/// Moving the pointer over a cell highlights the rectangle from the TOP-LEFT cell
+/// to the hovered cell and updates the "cols × rows" caption; clicking that cell
+/// calls `onPick(cols, rows)` to create a uniform layout of that size.
+///
+/// Hover tracking uses `onHover` per cell, which is available at the 10.15
+/// deployment target (unlike `Menu` / `Label`, which are 11+). The highlighted
+/// extent is just the 1-based (col, row) of the hovered cell — every cell at or
+/// before it on BOTH axes is filled.
+private struct AddGridPicker: View {
+    /// Called with the chosen (cols, rows) when a cell is clicked.
+    let onPick: (Int, Int) -> Void
+
+    /// Grid bounds — "up to about 8 × 8" per the spec.
+    private let maxCols = 8
+    private let maxRows = 8
+
+    /// Visual sizing of each square cell + the spacing between cells.
+    private let cellSize: CGFloat = 18
+    private let cellSpacing: CGFloat = 3
+
+    /// The 1-based (col, row) currently hovered, or `nil` when the pointer is
+    /// outside the grid. Drives both the highlight and the caption.
+    @State private var hovered: (col: Int, row: Int)? = nil
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Caption: the size that a click would create, or a prompt when idle.
+            Text(captionText)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundColor(.primary)
+
+            VStack(spacing: cellSpacing) {
+                ForEach(1...maxRows, id: \.self) { row in
+                    HStack(spacing: cellSpacing) {
+                        ForEach(1...maxCols, id: \.self) { col in
+                            cell(col: col, row: row)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+    }
+
+    private var captionText: String {
+        if let h = hovered {
+            return "\(h.col) × \(h.row)"
+        }
+        return NSLocalizedString("Pick a size", tableName: "Main", value: "Pick a size", comment: "Add grid picker idle caption")
+    }
+
+    private func cell(col: Int, row: Int) -> some View {
+        let filled = isFilled(col: col, row: row)
+        return RoundedRectangle(cornerRadius: 2)
+            .fill(filled
+                  ? Color.accentColor.opacity(0.85)
+                  : Color(NSColor.unemphasizedSelectedContentBackgroundColor))
+            .overlay(
+                RoundedRectangle(cornerRadius: 2)
+                    .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+            )
+            .frame(width: cellSize, height: cellSize)
+            .contentShape(Rectangle())
+            // Hovering a cell sets the highlighted extent; leaving clears it only
+            // if this cell is still the recorded one (so moving between cells
+            // doesn't flicker the highlight off).
+            .onHover { inside in
+                if inside {
+                    hovered = (col, row)
+                } else if let h = hovered, h.col == col, h.row == row {
+                    hovered = nil
+                }
+            }
+            .onTapGesture { onPick(col, row) }
+    }
+
+    /// A cell is filled iff it is at or before the hovered cell on BOTH axes
+    /// (the top-left rectangle up to the pointer).
+    private func isFilled(col: Int, row: Int) -> Bool {
+        guard let h = hovered else { return false }
+        return col <= h.col && row <= h.row
     }
 }

@@ -254,6 +254,17 @@ class GridSettingsModel: ObservableObject {
         reloadLayouts()
     }
 
+    /// Add a uniform `cols` × `rows` layout (a fresh UUID id, a "cols × rows"
+    /// name) for the selected display from the hover-to-pick Add grid, then
+    /// refresh. No-op if no display is selected or the size is degenerate.
+    func addUniformLayout(cols: Int, rows: Int) {
+        guard let uuid = selectedDisplayUUID, cols >= 1, rows >= 1 else { return }
+        let name = "\(cols) × \(rows)"
+        let layout = ZoneLayout.uniform(cols: cols, rows: rows, id: UUID().uuidString, name: name)
+        GridModel.instance.addLayout(layout, forDisplay: uuid)
+        reloadLayouts()
+    }
+
     func renameLayout(id: String, to newName: String) {
         guard let uuid = selectedDisplayUUID else { return }
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)

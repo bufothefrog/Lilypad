@@ -493,6 +493,39 @@ extension ZoneLayout {
         Self.ratioString(from: currentColumnRatios)
     }
 
+    // MARK: - Per-track ratio convenience (single-track resize)
+
+    /// Resize ONLY the column track at `index` to the positive proportion `value`,
+    /// keeping every other column's CURRENT proportion (and all merges, since the
+    /// track count is unchanged). Built on `settingColumnRatios`: it takes the
+    /// current per-column ratios, replaces the one at `index`, and re-applies them
+    /// (same count -> reposition only). Returns `nil` for an out-of-range index, a
+    /// non-positive / non-finite `value`, or any result that wouldn't be valid.
+    ///
+    /// This is the per-track field's commit path (the strip of small number fields
+    /// above each column): typing a new number in one field resizes just that
+    /// column and re-normalizes the rest against it.
+    func settingColumnRatio(atIndex index: Int, to value: Double) -> ZoneLayout? {
+        guard value.isFinite, value > 0 else { return nil }
+        var ratios = currentColumnRatios
+        guard index >= 0, index < ratios.count else { return nil }
+        ratios[index] = value
+        return settingColumnRatios(ratios)
+    }
+
+    /// Resize ONLY the row track at `index` to the positive proportion `value`,
+    /// keeping every other row's current proportion (and all merges). The row-axis
+    /// twin of `settingColumnRatio(atIndex:to:)`; rows are measured from the TOP.
+    /// Returns `nil` for an out-of-range index, a non-positive / non-finite
+    /// `value`, or an invalid result.
+    func settingRowRatio(atIndex index: Int, to value: Double) -> ZoneLayout? {
+        guard value.isFinite, value > 0 else { return nil }
+        var ratios = currentRowRatios
+        guard index >= 0, index < ratios.count else { return nil }
+        ratios[index] = value
+        return settingRowRatios(ratios)
+    }
+
     /// The current row proportions as a display string like `"1:2:1"`.
     var currentRowRatioString: String {
         Self.ratioString(from: currentRowRatios)
