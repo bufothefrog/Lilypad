@@ -182,29 +182,36 @@ struct LayoutEditorView: View {
                 canvasBody(canvas: CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height))
                     .frame(width: canvas.width, height: canvas.height)
                     .offset(x: canvas.minX, y: canvas.minY)
-                // Persistent "+" add-track buttons in the reserved right/bottom
-                // margins, clear of the top/left ratio-number gutters: right-center
-                // adds a column, bottom-center adds a row.
-                addTrackButton(NSLocalizedString("Add a column", tableName: "Main", value: "Add a column", comment: "Add column button tooltip")) { addColumn() }
-                    .position(x: canvas.maxX + addGutter / 2, y: canvas.midY)
-                addTrackButton(NSLocalizedString("Add a row", tableName: "Main", value: "Add a row", comment: "Add row button tooltip")) { addRow() }
-                    .position(x: canvas.midX, y: canvas.maxY + addGutter / 2)
+                // Persistent "+"/"−" add/remove buttons in the reserved right/
+                // bottom margins, clear of the top/left ratio-number gutters.
+                // Adding appends a track on the right/bottom keeping the other
+                // tracks' ratios; "−" removes the last one (disabled at one track).
+                addTrackButton(systemName: "plus", help: NSLocalizedString("Add a column", tableName: "Main", value: "Add a column", comment: "Add column tooltip")) { addColumn() }
+                    .position(x: canvas.maxX + addGutter / 2, y: canvas.midY - 13)
+                addTrackButton(systemName: "minus", help: NSLocalizedString("Remove the last column", tableName: "Main", value: "Remove the last column", comment: "Remove column tooltip"), enabled: working.cols > 1) { removeColumn() }
+                    .position(x: canvas.maxX + addGutter / 2, y: canvas.midY + 13)
+                addTrackButton(systemName: "plus", help: NSLocalizedString("Add a row", tableName: "Main", value: "Add a row", comment: "Add row tooltip")) { addRow() }
+                    .position(x: canvas.midX - 13, y: canvas.maxY + addGutter / 2)
+                addTrackButton(systemName: "minus", help: NSLocalizedString("Remove the last row", tableName: "Main", value: "Remove the last row", comment: "Remove row tooltip"), enabled: working.rows > 1) { removeRow() }
+                    .position(x: canvas.midX + 13, y: canvas.maxY + addGutter / 2)
             }
         }
         .frame(minHeight: 280)
     }
 
-    /// A persistent circular "+" add-track button, placed in the reserved canvas
-    /// margins (right-center adds a column, bottom-center adds a row).
-    private func addTrackButton(_ help: String, _ action: @escaping () -> Void) -> some View {
+    /// A persistent circular add/remove-track button in the reserved canvas
+    /// margins. `systemName` is "plus" or "minus"; greyed + disabled when
+    /// `enabled` is false (e.g. trying to remove the last track).
+    private func addTrackButton(systemName: String, help: String, enabled: Bool = true, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text("+")
-                .font(.system(size: 14, weight: .bold))
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .bold))
                 .foregroundColor(.white)
                 .frame(width: 20, height: 20)
-                .background(Circle().fill(Color.accentColor))
+                .background(Circle().fill(enabled ? Color.accentColor : Color(NSColor.tertiaryLabelColor)))
         }
         .buttonStyle(PlainButtonStyle())
+        .disabled(!enabled)
         .help(help)
     }
 
@@ -395,7 +402,7 @@ struct LayoutEditorView: View {
             HStack(spacing: 8) {
                 Button(NSLocalizedString("Remove Divider", tableName: "Main", value: "Remove Divider", comment: "")) { removeSelectedDivider() }
                     .disabled(selectedDivider == nil)
-                Text(NSLocalizedString("Use + at the right / bottom of the canvas to add columns / rows.", tableName: "Main", value: "Use + at the right / bottom of the canvas to add columns / rows.", comment: "Add-track hint"))
+                Text(NSLocalizedString("Use +/− at the right / bottom of the canvas to add or remove columns / rows.", tableName: "Main", value: "Use +/− at the right / bottom of the canvas to add or remove columns / rows.", comment: "Add/remove-track hint"))
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
@@ -611,44 +618,62 @@ struct LayoutEditorView: View {
 
     // MARK: - Edit actions (all run a pure op on `working`)
 
-    /// Add a new column by splitting the widest column down the middle.
+    /// Add a column on the RIGHT, keeping every existing column's ratio (the
+    /// numbers you didn't change stay put): a clean axis appends a unit (1) column
+    /// — so 1:2:1 becomes 1:2:1:1 — and a freeform axis appends an average-sized
+    /// column so the other tracks keep their relative sizes.
     private func addColumn() {
-        guard let mid = midpointOfLargestGap(working.colBoundaries) else { return }
-        if let next = working.addingColumnBoundary(at: mid) {
-            working = next
-            resetSelectionAfterStructuralEdit()
-            clearFeedback()
-        } else {
-            showError(NSLocalizedString("Could not add a column there.", tableName: "Main", value: "Could not add a column there.", comment: ""))
-        }
+        applyTrackRatios(axis: .column, appendedRatios(working.currentColumnRatios), failure: "Could not add a column.")
     }
 
-    /// Add a new row by splitting the tallest row down the middle.
+    /// Add a row at the BOTTOM, keeping every existing row's ratio (same rule).
     private func addRow() {
-        guard let mid = midpointOfLargestGap(working.rowBoundaries) else { return }
-        if let next = working.addingRowBoundary(at: mid) {
+        applyTrackRatios(axis: .row, appendedRatios(working.currentRowRatios), failure: "Could not add a row.")
+    }
+
+    /// Remove the RIGHTMOST column, keeping the remaining columns' ratios. No-op at
+    /// one column.
+    private func removeColumn() {
+        guard working.cols > 1 else { return }
+        applyTrackRatios(axis: .column, droppedLastRatio(working.currentColumnRatios), failure: "Could not remove a column.")
+    }
+
+    /// Remove the BOTTOM row, keeping the remaining rows' ratios. No-op at one row.
+    private func removeRow() {
+        guard working.rows > 1 else { return }
+        applyTrackRatios(axis: .row, droppedLastRatio(working.currentRowRatios), failure: "Could not remove a row.")
+    }
+
+    /// Ratio array for ADDING a track: a clean axis keeps its integer ratio and
+    /// appends a unit (1); a freeform axis keeps its raw proportions and appends an
+    /// average-sized track (so the others keep their relative sizes).
+    private func appendedRatios(_ proportions: [Double]) -> [Double] {
+        if let ints = ZoneLayout.cleanIntegerRatio(from: proportions) {
+            return ints.map(Double.init) + [1]
+        }
+        let avg = proportions.isEmpty ? 1 : proportions.reduce(0, +) / Double(proportions.count)
+        return proportions + [avg]
+    }
+
+    /// Ratio array for REMOVING the last track: drop the last value from the
+    /// integer ratio (clean) or the raw proportions (freeform); the rest keep their
+    /// ratios when re-applied.
+    private func droppedLastRatio(_ proportions: [Double]) -> [Double] {
+        let base = ZoneLayout.cleanIntegerRatio(from: proportions)?.map(Double.init) ?? proportions
+        return Array(base.dropLast())
+    }
+
+    /// Apply a whole-axis ratio array (add/remove), updating the working copy +
+    /// resetting selection on success, or showing `failure` on an invalid result.
+    private func applyTrackRatios(axis: DividerAxis, _ ratios: [Double], failure: String) {
+        let next = axis == .column ? working.settingColumnRatios(ratios) : working.settingRowRatios(ratios)
+        if let next = next {
             working = next
             resetSelectionAfterStructuralEdit()
             clearFeedback()
         } else {
-            showError(NSLocalizedString("Could not add a row there.", tableName: "Main", value: "Could not add a row there.", comment: ""))
+            showError(NSLocalizedString(failure, tableName: "Main", value: failure, comment: "Add/remove track failed"))
         }
-    }
-
-    /// Midpoint fraction of the largest gap between consecutive boundaries (the
-    /// widest track), used by Add Column / Add Row to split it in half.
-    private func midpointOfLargestGap(_ boundaries: [Double]) -> Double? {
-        guard boundaries.count >= 2 else { return nil }
-        var bestMid: Double? = nil
-        var bestGap = -1.0
-        for i in 1..<boundaries.count {
-            let gap = boundaries[i] - boundaries[i - 1]
-            if gap > bestGap {
-                bestGap = gap
-                bestMid = (boundaries[i] + boundaries[i - 1]) / 2
-            }
-        }
-        return bestMid
     }
 
     private func removeSelectedDivider() {
