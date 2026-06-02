@@ -23,6 +23,14 @@
 import Foundation
 import CoreGraphics
 
+/// The axis along which `splittingZone(_:axis:at:)` cuts a single zone.
+/// `.vertical` is a VERTICAL cut line -> left / right halves; `.horizontal` is a
+/// HORIZONTAL cut line -> top / bottom halves (rows measured from the TOP).
+enum ZoneSplitAxis {
+    case vertical
+    case horizontal
+}
+
 extension ZoneLayout {
 
     /// Fractions within this distance are treated as the same cut line (used to
@@ -177,6 +185,180 @@ extension ZoneLayout {
         }
 
         return ZoneLayout(id: id, name: name, colBoundaries: colBoundaries, rowBoundaries: newRows, cellZones: newCellZones)
+    }
+
+    // MARK: - Split a SINGLE zone (FancyZones-style click-to-split)
+
+    /// Divide ONLY the zone `zoneId` into two zones along a cut at the absolute
+    /// fraction `fraction` (x for `.vertical`, y measured FROM THE TOP for
+    /// `.horizontal`, matching `rowBoundaries`). Every OTHER zone is unchanged: it
+    /// keeps its id across the cut line, so a merged neighbor that the new gridline
+    /// happens to cross stays a single rectangle. The target zone's cells on the
+    /// FAR side of the cut (the RIGHT part for `.vertical`, the BOTTOM part — larger
+    /// y / later rows, since row 0 is the TOP — for `.horizontal`) are reassigned to
+    /// a fresh unused id; the near side keeps the original id.
+    ///
+    /// Two cases:
+    ///  - If `fraction` coincides (within `boundaryEpsilon`) with an existing grid
+    ///    boundary that lies STRICTLY INSIDE the zone's extent on the cut axis (the
+    ///    zone already spans multiple tracks there), no new gridline is needed — we
+    ///    only reassign the target zone's far-side cells to the fresh id. Both halves
+    ///    are rectangles.
+    ///  - Otherwise insert a NEW boundary at `fraction` across the whole grid, but —
+    ///    UNLIKE `addingColumnBoundary` / `addingRowBoundary` — every cell of the
+    ///    newly-duplicated track INHERITS THE SAME id as the track it was split from,
+    ///    so all OTHER zones stay merged across the new line. Then reassign the
+    ///    target zone's far-side cells to the fresh id.
+    ///
+    /// Returns `nil` if `fraction` is not STRICTLY interior to the zone's extent on
+    /// the cut axis (so a degenerate, zero-width half can never be produced), if the
+    /// zone id is unknown, or if the result fails `isValid`.
+    func splittingZone(_ zoneId: Int, axis: ZoneSplitAxis, at fraction: Double) -> ZoneLayout? {
+        switch axis {
+        case .vertical:   return splittingZoneVertically(zoneId, at: fraction)
+        case .horizontal: return splittingZoneHorizontally(zoneId, at: fraction)
+        }
+    }
+
+    /// Vertical cut (a vertical line) -> a LEFT half (keeps the id) and a RIGHT half
+    /// (the fresh id). See `splittingZone(_:axis:at:)`.
+    private func splittingZoneVertically(_ zoneId: Int, at fraction: Double) -> ZoneLayout? {
+        let cellsOfZone = cellIndices(forZones: [zoneId])
+        guard !cellsOfZone.isEmpty else { return nil }
+        let oldCols = cols
+        let coords = cellsOfZone.map { (col: $0 % oldCols, row: $0 / oldCols) }
+        let minCol = coords.map { $0.col }.min()!
+        let maxCol = coords.map { $0.col }.max()!
+
+        // The zone's left/right extent in fractions; the cut must be strictly inside.
+        let zoneLeft = colBoundaries[minCol]
+        let zoneRight = colBoundaries[maxCol + 1]
+        guard fraction > zoneLeft + Self.boundaryEpsilon,
+              fraction < zoneRight - Self.boundaryEpsilon else { return nil }
+
+        let fresh = nextFreshZoneId()
+
+        // Case A: the cut lands on an existing INTERIOR boundary of this zone — no
+        // new gridline, just reassign the far-side (right) cells to the fresh id.
+        if let boundaryIndex = colBoundaries.firstIndex(where: { abs($0 - fraction) < Self.boundaryEpsilon }),
+           boundaryIndex > minCol, boundaryIndex <= maxCol {
+            // Columns at index >= boundaryIndex are the RIGHT part of the zone.
+            var newCellZones = cellZones
+            for (col, row) in coords where col >= boundaryIndex {
+                newCellZones[row * oldCols + col] = fresh
+            }
+            let result = ZoneLayout(id: id, name: name, colBoundaries: colBoundaries, rowBoundaries: rowBoundaries, cellZones: newCellZones)
+            return result.isValid ? result : nil
+        }
+
+        // Case B: insert a NEW column boundary at `fraction`. Every duplicated cell
+        // INHERITS its source column's id (so all other zones stay merged), then the
+        // target zone's right-of-cut cells become the fresh id.
+        let insertAt = colBoundaries.firstIndex(where: { $0 > fraction }) ?? colBoundaries.count
+        // A duplicate boundary should have been caught by Case A; guard anyway.
+        guard !colBoundaries.contains(where: { abs($0 - fraction) < Self.boundaryEpsilon }) else { return nil }
+        var newCols = colBoundaries
+        newCols.insert(fraction, at: insertAt)
+        let splitCol = insertAt - 1 // 0-based among OLD columns, the column the line crosses
+
+        let newColCount = oldCols + 1
+        var newCellZones: [Int] = []
+        newCellZones.reserveCapacity(newColCount * rows)
+        for row in 0..<rows {
+            for col in 0..<newColCount {
+                let sourceCol: Int      // which OLD column this new cell copies its id from
+                let isRightOfCut: Bool  // is this new cell on the far (right) side of the cut?
+                if col <= splitCol {
+                    sourceCol = col
+                    isRightOfCut = false
+                } else if col == splitCol + 1 {
+                    // The duplicated half of the crossed column — inherit the SAME id
+                    // (keeps every non-target zone merged across the new line).
+                    sourceCol = splitCol
+                    isRightOfCut = true
+                } else {
+                    sourceCol = col - 1
+                    isRightOfCut = true
+                }
+                let sourceZone = cellZones[row * oldCols + sourceCol]
+                if sourceZone == zoneId, isRightOfCut {
+                    newCellZones.append(fresh)
+                } else {
+                    newCellZones.append(sourceZone)
+                }
+            }
+        }
+        let result = ZoneLayout(id: id, name: name, colBoundaries: newCols, rowBoundaries: rowBoundaries, cellZones: newCellZones)
+        return result.isValid ? result : nil
+    }
+
+    /// Horizontal cut (a horizontal line) -> a TOP half (keeps the id) and a BOTTOM
+    /// half (the fresh id). Rows are measured FROM THE TOP, so the BOTTOM half = the
+    /// rows AFTER the cut (larger row index / larger y). See `splittingZone`.
+    private func splittingZoneHorizontally(_ zoneId: Int, at fraction: Double) -> ZoneLayout? {
+        let cellsOfZone = cellIndices(forZones: [zoneId])
+        guard !cellsOfZone.isEmpty else { return nil }
+        let colCount = cols
+        let coords = cellsOfZone.map { (col: $0 % colCount, row: $0 / colCount) }
+        let minRow = coords.map { $0.row }.min()!
+        let maxRow = coords.map { $0.row }.max()!
+
+        // The zone's top/bottom extent as top-measured fractions; cut strictly inside.
+        let zoneTop = rowBoundaries[minRow]
+        let zoneBottom = rowBoundaries[maxRow + 1]
+        guard fraction > zoneTop + Self.boundaryEpsilon,
+              fraction < zoneBottom - Self.boundaryEpsilon else { return nil }
+
+        let fresh = nextFreshZoneId()
+
+        // Case A: the cut lands on an existing INTERIOR row boundary of this zone —
+        // no new gridline, just reassign the far-side (bottom = larger row) cells.
+        if let boundaryIndex = rowBoundaries.firstIndex(where: { abs($0 - fraction) < Self.boundaryEpsilon }),
+           boundaryIndex > minRow, boundaryIndex <= maxRow {
+            var newCellZones = cellZones
+            for (col, row) in coords where row >= boundaryIndex {
+                newCellZones[row * colCount + col] = fresh
+            }
+            let result = ZoneLayout(id: id, name: name, colBoundaries: colBoundaries, rowBoundaries: rowBoundaries, cellZones: newCellZones)
+            return result.isValid ? result : nil
+        }
+
+        // Case B: insert a NEW row boundary at `fraction`. Duplicated cells inherit
+        // the SAME id (other zones stay merged); the target zone's below-cut cells
+        // become the fresh id. Below = larger row index (row 0 is the top).
+        let insertAt = rowBoundaries.firstIndex(where: { $0 > fraction }) ?? rowBoundaries.count
+        guard !rowBoundaries.contains(where: { abs($0 - fraction) < Self.boundaryEpsilon }) else { return nil }
+        var newRows = rowBoundaries
+        newRows.insert(fraction, at: insertAt)
+        let splitRow = insertAt - 1
+
+        let newRowCount = rows + 1
+        var newCellZones: [Int] = []
+        newCellZones.reserveCapacity(colCount * newRowCount)
+        for row in 0..<newRowCount {
+            for col in 0..<colCount {
+                let sourceRow: Int
+                let isBelowCut: Bool
+                if row <= splitRow {
+                    sourceRow = row
+                    isBelowCut = false
+                } else if row == splitRow + 1 {
+                    sourceRow = splitRow
+                    isBelowCut = true
+                } else {
+                    sourceRow = row - 1
+                    isBelowCut = true
+                }
+                let sourceZone = cellZones[sourceRow * colCount + col]
+                if sourceZone == zoneId, isBelowCut {
+                    newCellZones.append(fresh)
+                } else {
+                    newCellZones.append(sourceZone)
+                }
+            }
+        }
+        let result = ZoneLayout(id: id, name: name, colBoundaries: colBoundaries, rowBoundaries: newRows, cellZones: newCellZones)
+        return result.isValid ? result : nil
     }
 
     // MARK: - Remove a boundary (collapse two cell tracks)

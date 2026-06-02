@@ -73,6 +73,7 @@
 		B11A00000000000000001452 /* LayoutEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A00000000000000001451 /* LayoutEditorView.swift */; };
 		B11A00000000000000001442 /* GridSettingsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A00000000000000001441 /* GridSettingsModelTests.swift */; };
 		B11A00000000000000001462 /* ZoneLayoutEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A00000000000000001461 /* ZoneLayoutEditorTests.swift */; };
+		B11A00000000000000001472 /* ZoneSplitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11A00000000000000001471 /* ZoneSplitTests.swift */; };
 		984EDB0F29A42ED200D119D2 /* LaunchOnLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 984EDB0E29A42ED200D119D2 /* LaunchOnLogin.swift */; };
 		9851A5C3251BEBA300ECF78C /* OrientationAware.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9851A5C2251BEBA300ECF78C /* OrientationAware.swift */; };
 		985B9BF522B93EEC00A2E8F0 /* ApplicationToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 985B9BF422B93EEC00A2E8F0 /* ApplicationToggle.swift */; };
@@ -224,6 +225,7 @@
 		B11A00000000000000001451 /* LayoutEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorView.swift; sourceTree = "<group>"; };
 		B11A00000000000000001441 /* GridSettingsModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridSettingsModelTests.swift; sourceTree = "<group>"; };
 		B11A00000000000000001461 /* ZoneLayoutEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneLayoutEditorTests.swift; sourceTree = "<group>"; };
+		B11A00000000000000001471 /* ZoneSplitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneSplitTests.swift; sourceTree = "<group>"; };
 		984EDB0E29A42ED200D119D2 /* LaunchOnLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchOnLogin.swift; sourceTree = "<group>"; };
 		9851A5C2251BEBA300ECF78C /* OrientationAware.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrientationAware.swift; sourceTree = "<group>"; };
 		985B9BF422B93EEC00A2E8F0 /* ApplicationToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationToggle.swift; sourceTree = "<group>"; };
@@ -501,6 +503,7 @@
 				B11A0000000000000000D001 /* GridCalculationTests.swift */,
 				B11A00000000000000001441 /* GridSettingsModelTests.swift */,
 				B11A00000000000000001461 /* ZoneLayoutEditorTests.swift */,
+				B11A00000000000000001471 /* ZoneSplitTests.swift */,
 				9824702122AF9B7E0037B409 /* Info.plist */,
 			);
 			path = RectangleTests;
@@ -852,6 +855,7 @@
 				B11A0000000000000000D002 /* GridCalculationTests.swift in Sources */,
 				B11A00000000000000001442 /* GridSettingsModelTests.swift in Sources */,
 				B11A00000000000000001462 /* ZoneLayoutEditorTests.swift in Sources */,
+				B11A00000000000000001472 /* ZoneSplitTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

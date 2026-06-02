@@ -2,44 +2,40 @@
 //  LayoutEditorView.swift
 //  Rectangle / Lilypad
 //
-//  M15 (Stage 9b). The FancyZones-style cut / merge canvas editor, presented as
-//  a sheet from the Layouts pane's "Edit…" button. The user edits a WORKING COPY
-//  of a `ZoneLayout` (`@State`) using the pure operations in
+//  M15+. A PowerToys-FancyZones-style grid editor with macOS design language,
+//  presented as a sheet from the Layouts pane's "Edit…" button. The user edits a
+//  WORKING COPY of a `ZoneLayout` (`@State`) using the pure operations in
 //  `ZoneLayoutEditor.swift`, then Saves (writes the geometry back through
 //  `GridModel.updateLayout`) or Cancels (discards).
 //
-//  CANVAS GEOMETRY: the canvas is just a scaled instance of `GridCalculation` in
-//  a local rect. We hand `GridCalculation.zoneRect` / `cellRect` a local CGRect
-//  the size of the drawn canvas (origin at 0,0, BOTTOM-LEFT like the runtime),
-//  then flip y once at draw time for SwiftUI's top-left coordinate space. This
-//  reuses the runtime geometry verbatim — no rect math is duplicated here.
+//  INTERACTION (replaces the old ratio-fields / +/− / button-row editor):
+//   - SPLIT: hover a zone to see a SNAPPING split GUIDE that follows the cursor.
+//     The guide is VERTICAL by default; pressing SPACE (or holding Option) rotates
+//     it to HORIZONTAL. Click a zone to commit the split at the snapped guide
+//     position via `splittingZone`, dividing only that zone. Zones are NUMBERED
+//     1…n like FancyZones.
+//   - MERGE: press-drag across the canvas to sweep a rubber-band; covered zones
+//     highlight. On release, a valid rectangular set (`canMerge`) shows a native
+//     "Merge" chip near the selection; clicking it merges them. A non-rectangular
+//     sweep shows a brief "can't merge" hint and clears.
+//   - RESIZE: drag the divider lines between zones to resize, with snapping
+//     (`movingColumn/RowBoundary` + `snapFraction`).
+//   - UNDO: an in-editor snapshot stack; ⌘Z undo, ⌘⇧Z redo. The working copy is
+//     pushed before each structural edit (split / merge / resize-commit).
 //
-//  PIXEL READOUT: each zone is labeled with its size in the selected monitor's
-//  PIXELS — point size (NSScreen.frame.size) × backingScaleFactor when the
-//  display is connected, falling back to a point readout (scale 1) for a
-//  disconnected display whose backing scale we can't query.
+//  CANVAS GEOMETRY: the canvas is a scaled instance of `GridCalculation` in a local
+//  rect. We hand `GridCalculation.zoneRect` / `cellRect` a local CGRect the size of
+//  the drawn canvas (origin 0,0, BOTTOM-LEFT like the runtime), then flip y once at
+//  draw time for SwiftUI's top-left space. ROW 0 IS THE TOP. No rect math is
+//  duplicated here.
 //
-//  RATIOS (per-track fields): as a precise alternative to dragging dividers, a
-//  small number field sits ABOVE each column and to the LEFT of each row, each
-//  aligned to the actual (possibly non-uniform) track center computed from
-//  `colBoundaries` / `rowBoundaries` inside the canvas `GeometryReader`, so the
-//  fields line up with the tracks and re-align live when a divider is dragged or
-//  the grid resizes. Each field shows that track's current proportion (from
-//  `currentColumnRatios` / `currentRowRatios`, normalized to small integers). On
-//  commit it resizes ONLY that track via the pure `settingColumnRatio(atIndex:to:)`
-//  / `settingRowRatio(atIndex:to:)` ops (same track count -> merges preserved).
-//  Invalid input (empty / non-numeric / zero / negative) is a no-op with inline
-//  feedback.
+//  PIXEL READOUT (kept): each zone is labeled with its size in the selected
+//  monitor's PIXELS — point size × backingScaleFactor when connected, falling back
+//  to a point readout for a disconnected display.
 //
-//  NATIVE LOOK: the sheet uses standard system controls + fonts + spacing, a
-//  subtle native divider/handle styling, labeled `GroupBox` sections (Dividers,
-//  Zones), and a proper bottom-trailing button bar (Cancel = .cancelAction/Esc,
-//  Save = the default button via .defaultAction/Return).
-//
-//  AVAILABILITY: deployment target is 10.15, so this view avoids 11+ SwiftUI
-//  API (`Menu` / `Label` / `Image(systemName:)`); it uses `GeometryReader`,
-//  `Path`, `DragGesture`, plain `Button`s, and `GroupBox` (all 10.15). The
-//  `.keyboardShortcut` button modifiers are 11+, so they're gated with `#available`.
+//  AVAILABILITY: deployment target is 13.0, so modern SwiftUI is fine
+//  (`.onContinuousHover`, `.keyboardShortcut`, `.focusable`). No text fields remain,
+//  so the prior focused-field-commit render loop cannot recur.
 //
 
 import SwiftUI
@@ -61,19 +57,64 @@ struct LayoutEditorView: View {
     /// from the pure operations; the original is untouched until Save.
     @State private var working: ZoneLayout
 
-    /// Zones the user has tapped (multi-select drives merge). Cleared after any
-    /// structural edit so stale ids can't be merged.
-    @State private var selectedZones: Set<Int> = []
+    // MARK: Split-guide state
 
-    /// The interior divider the user last touched (for "Remove divider").
-    @State private var selectedDivider: DividerRef? = nil
+    /// The zone the cursor is hovering (for the split guide), or nil when the
+    /// cursor is off the canvas / over a divider.
+    @State private var hoverZone: Int? = nil
+    /// The cursor location inside the canvas's LOCAL top-left space (SwiftUI), used
+    /// to position the split guide. nil when not hovering.
+    @State private var hoverPoint: CGPoint? = nil
+    /// The current split orientation. Vertical (a vertical cut line) by default;
+    /// Space / Option rotates it to horizontal.
+    @State private var splitAxis: ZoneSplitAxis = .vertical
+    /// True while Option is held (an alternative to Space for rotating the guide).
+    @State private var optionDown: Bool = false
+    /// The local `flagsChanged` monitor that tracks the Option key, installed while
+    /// the sheet is on screen and removed on disappear.
+    @State private var flagsMonitor: Any? = nil
 
-    /// Transient user feedback (e.g. a rejected non-rectangular merge or an
-    /// invalid ratio string). When non-empty the inline feedback bar shows it.
+    // MARK: Merge sweep state
+
+    /// The in-progress merge sweep: the anchor zone where the press began and the
+    /// zone currently under the cursor. nil when no sweep is active.
+    @State private var sweepAnchorZone: Int? = nil
+    @State private var sweepCurrentZone: Int? = nil
+    /// Whether the active gesture has moved far enough / across zones to count as a
+    /// drag (merge) rather than a click (split).
+    @State private var gestureIsDrag: Bool = false
+    /// The press-start location in canvas-local space, to measure drag distance.
+    @State private var pressStart: CGPoint? = nil
+    /// True when the current press began on the Merge chip's hit rect. While set,
+    /// the canvas gesture stays out of the way (no sweep, no candidate clear, no
+    /// split on release) so the chip's own Button action wins the tap.
+    @State private var pressOnChip: Bool = false
+
+    /// The committed merge candidate awaiting the chip click: the set of zones the
+    /// sweep covered (a valid rectangle) and the SwiftUI-space point to anchor the
+    /// chip. nil when there is no pending merge.
+    @State private var mergeCandidate: MergeCandidate? = nil
+
+    // MARK: Resize state
+
+    /// The interior divider currently being dragged (for highlight), or nil.
+    @State private var activeDivider: DividerRef? = nil
+    /// Whether the current divider drag has pushed a snapshot yet (so a drag pushes
+    /// exactly one undo entry, not one per frame).
+    @State private var dividerDragSnapshotted: Bool = false
+
+    // MARK: Undo / redo
+
+    /// Snapshots of the working copy BEFORE each structural edit. ⌘Z pops.
+    @State private var undoStack: [ZoneLayout] = []
+    /// Snapshots popped by undo, for ⌘⇧Z redo. Cleared on any new edit.
+    @State private var redoStack: [ZoneLayout] = []
+
+    // MARK: Feedback
+
+    /// Transient user feedback (e.g. a rejected non-rectangular merge). When
+    /// non-empty the inline feedback bar shows it.
     @State private var feedback: String = ""
-
-    /// Whether the current `feedback` is an error (shown in a warning color) vs
-    /// a neutral note. Errors use the system warning tint; otherwise secondary.
     @State private var feedbackIsError: Bool = false
 
     /// The selected monitor's pixel size (point size × backing scale), resolved
@@ -100,12 +141,19 @@ struct LayoutEditorView: View {
         self.isPixelResolution = resolved.isPixels
     }
 
-    // MARK: - A reference to one interior divider.
+    // MARK: - Supporting types
 
     enum DividerAxis { case column, row }
     struct DividerRef: Equatable {
         var axis: DividerAxis
         var index: Int // boundary index in the relevant array (interior: 1...count-2)
+    }
+
+    /// A pending merge: the zones to merge and where to anchor the chip (SwiftUI
+    /// top-left canvas-local point).
+    struct MergeCandidate: Equatable {
+        var zones: Set<Int>
+        var chipPoint: CGPoint
     }
 
     // MARK: - Body
@@ -114,28 +162,39 @@ struct LayoutEditorView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             canvasContainer
-            dividersSection
-            zonesSection
+            hintBar
             feedbackBar
             Divider()
             footer
         }
         .padding(20)
-        .frame(minWidth: 580, minHeight: 600)
+        .frame(minWidth: 580, minHeight: 560)
+        // Keyboard: Space rotates the split guide; ⌘Z / ⌘⇧Z undo / redo. Hosted on
+        // invisible buttons so the shortcuts work without stealing focus from the
+        // canvas hover tracking.
+        .background(keyboardShortcuts)
+        // Track the Option key so holding it live-rotates the split guide (the
+        // "and/or hold Option" half of the rotate gesture).
+        .onAppear { installFlagsMonitor() }
+        .onDisappear { removeFlagsMonitor() }
     }
 
-    // MARK: - Per-track ratio strip geometry
+    private func installFlagsMonitor() {
+        removeFlagsMonitor()
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            optionDown = event.modifierFlags.contains(.option)
+            return event
+        }
+    }
 
-    /// Width of the left gutter holding the per-ROW ratio fields.
-    private let rowFieldGutter: CGFloat = 52
-    /// Height of the top gutter holding the per-COLUMN ratio fields.
-    private let colFieldGutter: CGFloat = 26
-    /// Size of one small ratio number field.
-    private let ratioFieldWidth: CGFloat = 44
-    private let ratioFieldHeight: CGFloat = 20
-    /// Margin reserved on the canvas's RIGHT and BOTTOM for the "+" add-track
-    /// buttons (right-center = add a column, bottom-center = add a row).
-    private let addGutter: CGFloat = 30
+    private func removeFlagsMonitor() {
+        if let monitor = flagsMonitor {
+            NSEvent.removeMonitor(monitor)
+            flagsMonitor = nil
+        }
+    }
+
+    // MARK: - Header
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -150,133 +209,39 @@ struct LayoutEditorView: View {
 
     private var resolutionSubtitle: String {
         let unit = isPixelResolution ? "px" : "pt"
-        return "\(displayName) — \(Int(pixelSize.width))×\(Int(pixelSize.height)) \(unit)"
+        return "\(displayName) — \(Int(pixelSize.width))×\(Int(pixelSize.height)) \(unit) · \(working.cols)×\(working.rows), \(working.zoneIds.count) " + NSLocalizedString("zones", tableName: "Main", value: "zones", comment: "zone count suffix")
     }
 
-    // MARK: - Canvas
+    // MARK: - Canvas container
 
     private var canvasContainer: some View {
-        // Reserve a top gutter for the per-column ratio fields and a left gutter
-        // for the per-row ratio fields; fit the monitor's aspect ratio inside the
-        // remaining space. The ratio fields are positioned in the SAME coordinate
-        // space as the canvas (offset by the gutters) so they line up with the
-        // actual track centers — even non-uniform ones — and re-align live.
         GeometryReader { geo in
-            // Reserve the top/left gutters for the ratio fields and a right/bottom
-            // margin for the "+" add-track buttons, then fit the monitor aspect in.
-            let canvasArea = CGSize(width: max(geo.size.width - rowFieldGutter - addGutter, 1),
-                                    height: max(geo.size.height - colFieldGutter - addGutter, 1))
-            let fitted = LayoutEditorView.fittedRect(aspect: pixelSize, in: canvasArea)
-            // The canvas origin in the GeometryReader's space (shifted past the gutters).
-            let canvasOriginX = rowFieldGutter + fitted.minX
-            let canvasOriginY = colFieldGutter + fitted.minY
-            let canvas = CGRect(x: canvasOriginX, y: canvasOriginY, width: fitted.width, height: fitted.height)
-
+            let fitted = LayoutEditorView.fittedRect(aspect: pixelSize, in: geo.size)
+            let canvas = CGRect(x: fitted.minX, y: fitted.minY, width: fitted.width, height: fitted.height)
             ZStack(alignment: .topLeading) {
                 Color.clear
-                // Per-column ratio fields, centered over each column track.
-                columnRatioFields(canvas: canvas)
-                // Per-row ratio fields, centered beside each row track.
-                rowRatioFields(canvas: canvas)
-                // The canvas itself.
-                canvasBody(canvas: CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height))
+                canvasBody(local: CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height))
                     .frame(width: canvas.width, height: canvas.height)
                     .offset(x: canvas.minX, y: canvas.minY)
-                // Persistent "+"/"−" add/remove buttons in the reserved right/
-                // bottom margins, clear of the top/left ratio-number gutters.
-                // Adding appends a track on the right/bottom keeping the other
-                // tracks' ratios; "−" removes the last one (disabled at one track).
-                addTrackButton(systemName: "plus", help: NSLocalizedString("Add a column", tableName: "Main", value: "Add a column", comment: "Add column tooltip")) { addColumn() }
-                    .position(x: canvas.maxX + addGutter / 2, y: canvas.midY - 13)
-                addTrackButton(systemName: "minus", help: NSLocalizedString("Remove the last column", tableName: "Main", value: "Remove the last column", comment: "Remove column tooltip"), enabled: working.cols > 1) { removeColumn() }
-                    .position(x: canvas.maxX + addGutter / 2, y: canvas.midY + 13)
-                addTrackButton(systemName: "plus", help: NSLocalizedString("Add a row", tableName: "Main", value: "Add a row", comment: "Add row tooltip")) { addRow() }
-                    .position(x: canvas.midX - 13, y: canvas.maxY + addGutter / 2)
-                addTrackButton(systemName: "minus", help: NSLocalizedString("Remove the last row", tableName: "Main", value: "Remove the last row", comment: "Remove row tooltip"), enabled: working.rows > 1) { removeRow() }
-                    .position(x: canvas.midX + 13, y: canvas.maxY + addGutter / 2)
             }
         }
-        .frame(minHeight: 280)
+        .frame(minHeight: 320)
     }
 
-    /// A persistent circular add/remove-track button in the reserved canvas
-    /// margins. `systemName` is "plus" or "minus"; greyed + disabled when
-    /// `enabled` is false (e.g. trying to remove the last track).
-    private func addTrackButton(systemName: String, help: String, enabled: Bool = true, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(.white)
-                .frame(width: 20, height: 20)
-                .background(Circle().fill(enabled ? Color.accentColor : Color(NSColor.tertiaryLabelColor)))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .disabled(!enabled)
-        .help(help)
-    }
-
-    // MARK: - Per-track ratio fields
-
-    /// One small number field horizontally CENTERED over each column track, in the
-    /// gutter above the canvas. Each field's x-center is the midpoint of that
-    /// column's boundaries — `(colBoundaries[i] + colBoundaries[i+1]) / 2` × canvas
-    /// width — so non-uniform columns get their fields placed correctly and the
-    /// fields re-align whenever a divider drag changes the boundaries.
-    @ViewBuilder
-    private func columnRatioFields(canvas: CGRect) -> some View {
-        // A FREEFORM axis (no clean small-integer ratio) shows greyed dash
-        // placeholders instead of editable numbers — an obvious "ratios not in
-        // use" state. A clean axis shows the editable small integers.
-        let freeform = ZoneLayout.cleanIntegerRatio(from: working.currentColumnRatios) == nil
-        let ratios = trackIntegerRatios(working.currentColumnRatios)
-        ForEach(0..<working.cols, id: \.self) { i in
-            let mid = (working.colBoundaries[i] + working.colBoundaries[i + 1]) / 2
-            let x = canvas.minX + CGFloat(mid) * canvas.width
-            TrackRatioField(value: ratios[i], isFreeform: freeform, onApply: { applyColumnRatio(atIndex: i, $0) })
-                .frame(width: ratioFieldWidth, height: ratioFieldHeight)
-                .position(x: x, y: colFieldGutter / 2)
-        }
-    }
-
-    /// One small number field vertically CENTERED beside each row track, in the
-    /// gutter left of the canvas. Row 0 is the TOP, and `rowBoundaries` are
-    /// measured from the top, so the y-center is simply the midpoint fraction ×
-    /// canvas height (no flip), matching the canvas's own row layout.
-    @ViewBuilder
-    private func rowRatioFields(canvas: CGRect) -> some View {
-        let freeform = ZoneLayout.cleanIntegerRatio(from: working.currentRowRatios) == nil
-        let ratios = trackIntegerRatios(working.currentRowRatios)
-        ForEach(0..<working.rows, id: \.self) { i in
-            let mid = (working.rowBoundaries[i] + working.rowBoundaries[i + 1]) / 2
-            let y = canvas.minY + CGFloat(mid) * canvas.height
-            TrackRatioField(value: ratios[i], isFreeform: freeform, onApply: { applyRowRatio(atIndex: i, $0) })
-                .frame(width: ratioFieldWidth, height: ratioFieldHeight)
-                .position(x: rowFieldGutter / 2, y: y)
-        }
-    }
-
-    /// Reduce raw fractional track proportions to small whole-number labels for the
-    /// fields, reusing the same display reduction as the ratio strings (so a
-    /// 25/50/25 split shows `1`, `2`, `1`). Falls back to a one-decimal value when
-    /// no clean small-integer ratio fits. The returned array is aligned 1:1 with
-    /// the tracks.
-    private func trackIntegerRatios(_ proportions: [Double]) -> [String] {
-        let string = ZoneLayout.ratioString(from: proportions)
-        let parts = string.split(separator: ":").map(String.init)
-        if parts.count == proportions.count { return parts }
-        // Fallback: a direct proportional readout if the string didn't split 1:1.
-        return proportions.map { String(format: "%.2g", $0) }
-    }
-
-    private func canvasBody(canvas: CGRect) -> some View {
-        // Local bottom-left rect the size of the drawn canvas — exactly the space
-        // GridCalculation expects (origin 0,0). We flip y per-zone for SwiftUI.
-        let local = CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height)
-        return ZStack(alignment: .topLeading) {
-            // Zone rects + readouts.
+    private func canvasBody(local: CGRect) -> some View {
+        // The interactive canvas layer (zones, guide, dividers) carries the
+        // press-drag gesture. The Merge chip is layered as an OVERLAY SIBLING on
+        // top of this layer so its Button is hit-tested ABOVE the canvas gesture —
+        // a tap on the chip reaches the Button instead of being arbitrated into the
+        // parent minimumDistance:0 drag (which would clear the chip and split). The
+        // gesture also guards `mergeChipHitRect` as a defensive backstop.
+        ZStack(alignment: .topLeading) {
+            // Zone rects + numbers + pixel readouts.
             ForEach(working.zoneIds, id: \.self) { zoneId in
                 zoneView(zoneId: zoneId, local: local)
             }
+            // The snapping split guide (only while hovering a zone, no sweep/chip).
+            splitGuide(local: local)
             // Interior divider handles (drawn on top so they're draggable).
             dividerHandles(local: local)
         }
@@ -286,7 +251,24 @@ struct LayoutEditorView: View {
                 .stroke(Color(NSColor.separatorColor), lineWidth: 1)
         )
         .cornerRadius(4)
+        .contentShape(Rectangle())
+        // Hover tracking for the split guide (13+).
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point):
+                updateHover(at: point, local: local)
+            case .ended:
+                hoverPoint = nil
+                hoverZone = nil
+            }
+        }
+        // Press-drag: distinguishes a click-to-split from a drag-to-merge.
+        .gesture(canvasGesture(local: local))
+        // The Merge chip sits above the gesture layer so its tap is not stolen.
+        .overlay(mergeChip(local: local))
     }
+
+    // MARK: - Zone view
 
     private func zoneView(zoneId: Int, local: CGRect) -> some View {
         let cocoaRect = GridCalculation.zoneRect(layout: working, zoneId: zoneId, in: local)
@@ -295,23 +277,31 @@ struct LayoutEditorView: View {
                            y: local.height - cocoaRect.maxY,
                            width: cocoaRect.width,
                            height: cocoaRect.height)
-        let isSelected = selectedZones.contains(zoneId)
+        let inSweep = sweepZones.contains(zoneId)
+        let isHovered = hoverZone == zoneId && sweepAnchorZone == nil && mergeCandidate == nil
+        let number = (working.zoneIds.firstIndex(of: zoneId) ?? 0) + 1
         return ZStack {
             RoundedRectangle(cornerRadius: 3)
-                .fill(isSelected
+                .fill(inSweep
                       ? Color.accentColor.opacity(0.22)
                       : Color(NSColor.unemphasizedSelectedContentBackgroundColor))
             RoundedRectangle(cornerRadius: 3)
-                .stroke(isSelected ? Color.accentColor : Color(NSColor.separatorColor),
-                        lineWidth: isSelected ? 2 : 1)
-            Text(pixelReadout(for: cocoaRect, canvas: local))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(isSelected ? Color.accentColor : Color(NSColor.secondaryLabelColor))
-                .padding(2)
+                .stroke(inSweep || isHovered ? Color.accentColor : Color(NSColor.separatorColor),
+                        lineWidth: inSweep || isHovered ? 2 : 1)
+            VStack(spacing: 2) {
+                Text("\(number)")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(inSweep ? Color.accentColor : Color(NSColor.tertiaryLabelColor))
+                Text(pixelReadout(for: cocoaRect, canvas: local))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(inSweep ? Color.accentColor : Color(NSColor.secondaryLabelColor))
+            }
+            .padding(2)
         }
         .frame(width: max(frame.width - 2, 0), height: max(frame.height - 2, 0))
         .position(x: frame.midX, y: frame.midY)
-        .onTapGesture { toggleZoneSelection(zoneId) }
+        // No tap gesture here — the canvas-level gesture owns click-vs-drag.
+        .allowsHitTesting(false)
     }
 
     /// The live pixel/point readout for a zone: its fractional size × the
@@ -323,11 +313,62 @@ struct LayoutEditorView: View {
         return "\(Int(w.rounded()))×\(Int(h.rounded()))"
     }
 
-    // MARK: - Divider handles
+    // MARK: - Split guide
+
+    @ViewBuilder
+    private func splitGuide(local: CGRect) -> some View {
+        if sweepAnchorZone == nil, mergeCandidate == nil,
+           let zoneId = hoverZone, let point = hoverPoint,
+           let guide = splitGuideGeometry(zoneId: zoneId, point: point, local: local) {
+            Path { p in
+                p.move(to: guide.start)
+                p.addLine(to: guide.end)
+            }
+            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// The snapped split-guide line segment for the hovered zone, in SwiftUI
+    /// top-left canvas-local coordinates, or nil if the cut would be degenerate.
+    private func splitGuideGeometry(zoneId: Int, point: CGPoint, local: CGRect) -> (start: CGPoint, end: CGPoint)? {
+        // The hovered zone's rect in SwiftUI top-left space.
+        let cocoa = GridCalculation.zoneRect(layout: working, zoneId: zoneId, in: local)
+        guard !cocoa.isNull else { return nil }
+        let zoneRect = CGRect(x: cocoa.minX, y: local.height - cocoa.maxY, width: cocoa.width, height: cocoa.height)
+
+        let axis = effectiveSplitAxis
+        switch axis {
+        case .vertical:
+            // A vertical cut line: snap the x fraction across the whole canvas, then
+            // clamp the drawn line into the zone's vertical span.
+            let raw = Double(point.x / local.width)
+            let snapped = ZoneLayout.snapFraction(raw)
+            let x = CGFloat(snapped) * local.width
+            guard x > zoneRect.minX + 1, x < zoneRect.maxX - 1 else { return nil }
+            return (CGPoint(x: x, y: zoneRect.minY), CGPoint(x: x, y: zoneRect.maxY))
+        case .horizontal:
+            // A horizontal cut line: rowBoundaries are measured from the TOP and
+            // SwiftUI y is top-down, so the fraction maps to y directly (no flip).
+            let raw = Double(point.y / local.height)
+            let snapped = ZoneLayout.snapFraction(raw)
+            let y = CGFloat(snapped) * local.height
+            guard y > zoneRect.minY + 1, y < zoneRect.maxY - 1 else { return nil }
+            return (CGPoint(x: zoneRect.minX, y: y), CGPoint(x: zoneRect.maxX, y: y))
+        }
+    }
+
+    /// The split axis to use right now: Option held forces horizontal regardless of
+    /// the Space-toggled `splitAxis`, matching "Space and/or hold Option".
+    private var effectiveSplitAxis: ZoneSplitAxis {
+        if optionDown { return splitAxis == .vertical ? .horizontal : .vertical }
+        return splitAxis
+    }
+
+    // MARK: - Divider handles (resize)
 
     @ViewBuilder
     private func dividerHandles(local: CGRect) -> some View {
-        // Interior column boundaries: indices 1...cols-1.
         ForEach(interiorColumnIndices, id: \.self) { idx in
             columnHandle(index: idx, local: local)
         }
@@ -347,97 +388,292 @@ struct LayoutEditorView: View {
 
     private func columnHandle(index: Int, local: CGRect) -> some View {
         let x = CGFloat(working.colBoundaries[index]) * local.width
-        let isSel = selectedDivider == DividerRef(axis: .column, index: index)
+        let isActive = activeDivider == DividerRef(axis: .column, index: index)
         return Rectangle()
-            .fill(isSel ? Color.accentColor : Color(NSColor.separatorColor))
-            .frame(width: isSel ? 4 : 2, height: local.height)
-            // Widen the interactive target without widening the drawn line.
+            .fill(isActive ? Color.accentColor : Color(NSColor.separatorColor))
+            .frame(width: isActive ? 4 : 2, height: local.height)
             .frame(width: 11)
             .contentShape(Rectangle())
             .position(x: x, y: local.height / 2)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        selectedDivider = DividerRef(axis: .column, index: index)
+                        if !dividerDragSnapshotted {
+                            pushUndoSnapshot()
+                            dividerDragSnapshotted = true
+                        }
+                        activeDivider = DividerRef(axis: .column, index: index)
                         let raw = Double(value.location.x / local.width)
                         let snapped = ZoneLayout.snapFraction(raw)
                         if let next = working.movingColumnBoundary(at: index, to: snapped) {
                             working = next
                         }
                     }
+                    .onEnded { _ in
+                        activeDivider = nil
+                        dividerDragSnapshotted = false
+                    }
             )
-            .onTapGesture { selectedDivider = DividerRef(axis: .column, index: index) }
     }
 
     private func rowHandle(index: Int, local: CGRect) -> some View {
-        // rowBoundaries are measured from the TOP, and SwiftUI y is top-down, so
-        // the y position is the fraction × height directly (no flip).
+        // rowBoundaries are measured from the TOP, SwiftUI y is top-down — no flip.
         let y = CGFloat(working.rowBoundaries[index]) * local.height
-        let isSel = selectedDivider == DividerRef(axis: .row, index: index)
+        let isActive = activeDivider == DividerRef(axis: .row, index: index)
         return Rectangle()
-            .fill(isSel ? Color.accentColor : Color(NSColor.separatorColor))
-            .frame(width: local.width, height: isSel ? 4 : 2)
-            // Widen the interactive target without widening the drawn line.
+            .fill(isActive ? Color.accentColor : Color(NSColor.separatorColor))
+            .frame(width: local.width, height: isActive ? 4 : 2)
             .frame(height: 11)
             .contentShape(Rectangle())
             .position(x: local.width / 2, y: y)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        selectedDivider = DividerRef(axis: .row, index: index)
+                        if !dividerDragSnapshotted {
+                            pushUndoSnapshot()
+                            dividerDragSnapshotted = true
+                        }
+                        activeDivider = DividerRef(axis: .row, index: index)
                         let raw = Double(value.location.y / local.height)
                         let snapped = ZoneLayout.snapFraction(raw)
                         if let next = working.movingRowBoundary(at: index, to: snapped) {
                             working = next
                         }
                     }
+                    .onEnded { _ in
+                        activeDivider = nil
+                        dividerDragSnapshotted = false
+                    }
             )
-            .onTapGesture { selectedDivider = DividerRef(axis: .row, index: index) }
     }
 
-    // MARK: - Dividers section
+    // MARK: - Merge chip
 
-    private var dividersSection: some View {
-        editorGroupBox(NSLocalizedString("Dividers", tableName: "Main", value: "Dividers", comment: "Dividers section header")) {
-            HStack(spacing: 8) {
-                Button(NSLocalizedString("Remove Divider", tableName: "Main", value: "Remove Divider", comment: "")) { removeSelectedDivider() }
-                    .disabled(selectedDivider == nil)
-                Text(NSLocalizedString("Use +/− at the right / bottom of the canvas to add or remove columns / rows.", tableName: "Main", value: "Use +/− at the right / bottom of the canvas to add or remove columns / rows.", comment: "Add/remove-track hint"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-        }
-    }
-
-    // MARK: - Zones section
-
-    private var zonesSection: some View {
-        editorGroupBox(NSLocalizedString("Zones", tableName: "Main", value: "Zones", comment: "Zones section header")) {
-            HStack(spacing: 8) {
-                // Enabled for ANY 2+ selection (not only rectangular ones) so a
-                // non-rectangular pick reaches the rejection feedback in
-                // mergeSelection() — a true no-op-with-explanation, per the spec's
-                // "reject L-shaped / disjoint selections with clear feedback".
-                Button(NSLocalizedString("Merge", tableName: "Main", value: "Merge", comment: "")) { mergeSelection() }
-                    .disabled(selectedZones.count < 2)
-                Button(NSLocalizedString("Unmerge", tableName: "Main", value: "Unmerge", comment: "")) { unmergeSelection() }
-                    .disabled(!canUnmergeSelection)
-                Button(NSLocalizedString("Clear Selection", tableName: "Main", value: "Clear Selection", comment: "")) {
-                    selectedZones = []
-                    selectedDivider = nil
-                    clearFeedback()
+    @ViewBuilder
+    private func mergeChip(local: CGRect) -> some View {
+        // Sized to the full canvas (top-leading) so the inner `.position` is in the
+        // same canvas-local space as the zones; allowsHitTesting only the chip.
+        ZStack(alignment: .topLeading) {
+            if let candidate = mergeCandidate {
+                Button(action: { commitMerge(candidate.zones) }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "rectangle.on.rectangle")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(NSLocalizedString("Merge", tableName: "Main", value: "Merge", comment: "Merge chip"))
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .foregroundColor(.white)
+                    .background(Capsule().fill(Color.accentColor))
+                    .shadow(radius: 2, y: 1)
                 }
-                .disabled(selectedZones.isEmpty && selectedDivider == nil)
-                Spacer()
-                Text("\(working.cols)×\(working.rows), \(working.zoneIds.count) " + NSLocalizedString("zones", tableName: "Main", value: "zones", comment: "zone count suffix"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                .buttonStyle(PlainButtonStyle())
+                .position(x: clampChipX(candidate.chipPoint.x, local: local),
+                          y: clampChipY(candidate.chipPoint.y, local: local))
             }
+        }
+        .frame(width: local.width, height: local.height, alignment: .topLeading)
+        // Only the chip itself should swallow hits; empty canvas stays interactive.
+        .allowsHitTesting(mergeCandidate != nil)
+    }
+
+    private func clampChipX(_ x: CGFloat, local: CGRect) -> CGFloat {
+        min(max(x, 44), local.width - 44)
+    }
+    private func clampChipY(_ y: CGFloat, local: CGRect) -> CGFloat {
+        min(max(y, 16), local.height - 16)
+    }
+
+    /// The approximate hit rect of the visible Merge chip in SwiftUI top-left
+    /// canvas-local space, or nil when no chip is shown. Used to keep the
+    /// canvas-level press-drag gesture from intercepting a tap on the chip (which
+    /// would otherwise clear the candidate on press-down and commit a split on
+    /// release). Sized generously around the chip's clamped center so the whole
+    /// capsule (plus a touch of slop) is treated as "on the chip".
+    private func mergeChipHitRect(local: CGRect) -> CGRect? {
+        guard let candidate = mergeCandidate else { return nil }
+        let cx = clampChipX(candidate.chipPoint.x, local: local)
+        let cy = clampChipY(candidate.chipPoint.y, local: local)
+        // The capsule is ~84pt wide × ~26pt tall (icon + "Merge" + padding); pad it.
+        let halfW: CGFloat = 56
+        let halfH: CGFloat = 20
+        return CGRect(x: cx - halfW, y: cy - halfH, width: halfW * 2, height: halfH * 2)
+    }
+
+    // MARK: - Hover update
+
+    private func updateHover(at point: CGPoint, local: CGRect) {
+        // Ignore hover while a sweep / merge chip / divider drag owns the canvas.
+        guard sweepAnchorZone == nil, activeDivider == nil else { return }
+        guard local.width > 0, local.height > 0 else { return }
+        hoverPoint = point
+        hoverZone = zoneAt(point: point, local: local)
+    }
+
+    /// The zone under a SwiftUI top-left canvas-local point, via the runtime
+    /// hit-test in Cocoa bottom-left space (flip y once).
+    private func zoneAt(point: CGPoint, local: CGRect) -> Int? {
+        let cocoaPoint = CGPoint(x: point.x, y: local.height - point.y)
+        return GridCalculation.zone(at: cocoaPoint, in: local, layout: working)
+    }
+
+    // MARK: - Canvas press-drag gesture (click-to-split vs drag-to-merge)
+
+    private func canvasGesture(local: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                // A live divider drag owns the gesture stream; bail.
+                guard activeDivider == nil else { return }
+                if pressStart == nil {
+                    pressStart = value.startLocation
+                    // If the press began on the Merge chip, stay out of the way so
+                    // the chip's Button action wins: don't start a sweep and don't
+                    // clear the candidate. (SwiftUI arbitration between a child
+                    // Button and a parent minimumDistance:0 drag is ambiguous, so we
+                    // explicitly defer to the chip here.)
+                    if let chip = mergeChipHitRect(local: local), chip.contains(value.startLocation) {
+                        pressOnChip = true
+                        return
+                    }
+                    // A press elsewhere starts a fresh sweep and clears a stale chip.
+                    sweepAnchorZone = zoneAt(point: value.startLocation, local: local)
+                    sweepCurrentZone = sweepAnchorZone
+                    gestureIsDrag = false
+                    mergeCandidate = nil
+                }
+                // While the press owns the chip, ignore movement entirely.
+                guard !pressOnChip else { return }
+                let dx = value.location.x - value.startLocation.x
+                let dy = value.location.y - value.startLocation.y
+                let movedZone = zoneAt(point: value.location, local: local)
+                // Promote to a drag once the cursor moves enough OR crosses into a
+                // different zone than the anchor.
+                if hypot(dx, dy) > 6 || (movedZone != nil && movedZone != sweepAnchorZone) {
+                    gestureIsDrag = true
+                }
+                sweepCurrentZone = movedZone ?? sweepCurrentZone
+            }
+            .onEnded { value in
+                defer { resetGestureTransients() }
+                guard activeDivider == nil else { return }
+                // The press was on the chip — let the Button's action handle it; do
+                // not commit a split or sweep here.
+                if pressOnChip { return }
+                if gestureIsDrag {
+                    finishSweep(local: local)
+                } else {
+                    commitSplit(at: value.location, local: local)
+                }
+            }
+    }
+
+    private func resetGestureTransients() {
+        pressStart = nil
+        sweepAnchorZone = nil
+        sweepCurrentZone = nil
+        gestureIsDrag = false
+        pressOnChip = false
+    }
+
+    /// The zones currently covered by the active sweep (bounding cell-range of the
+    /// anchor + current zone), for highlighting.
+    private var sweepZones: Set<Int> {
+        guard let anchor = sweepAnchorZone else { return [] }
+        let current = sweepCurrentZone ?? anchor
+        return GridCalculation.zonesInSpan(fromZone: anchor, toZone: current, layout: working)
+    }
+
+    // MARK: - Commit: split
+
+    private func commitSplit(at point: CGPoint, local: CGRect) {
+        clearFeedback()
+        guard let zoneId = zoneAt(point: point, local: local) else { return }
+        let axis = effectiveSplitAxis
+        let fraction: Double
+        switch axis {
+        case .vertical:   fraction = ZoneLayout.snapFraction(Double(point.x / local.width))
+        case .horizontal: fraction = ZoneLayout.snapFraction(Double(point.y / local.height))
+        }
+        guard let next = working.splittingZone(zoneId, axis: axis, at: fraction) else {
+            // Degenerate / out-of-zone cut — no-op (no nag, the guide already hid).
+            return
+        }
+        pushUndoSnapshot()
+        working = next
+    }
+
+    // MARK: - Commit: merge
+
+    private func finishSweep(local: CGRect) {
+        clearFeedback()
+        guard let anchor = sweepAnchorZone else { return }
+        let current = sweepCurrentZone ?? anchor
+        let zones = GridCalculation.zonesInSpan(fromZone: anchor, toZone: current, layout: working)
+        // A single zone (or empty) isn't a merge.
+        guard zones.count >= 2 else { return }
+        if working.canMerge(zones) {
+            // Anchor the chip at the top-center of the selection's bounding box
+            // (SwiftUI top-left space).
+            let cocoa = GridCalculation.boundingRect(ofZones: zones, in: local, layout: working)
+            let chip = CGPoint(x: cocoa.midX, y: local.height - cocoa.maxY + 16)
+            mergeCandidate = MergeCandidate(zones: zones, chipPoint: chip)
+        } else {
+            showError(NSLocalizedString("Those zones don\u{2019}t form a rectangle — can\u{2019}t merge.", tableName: "Main", value: "Those zones don\u{2019}t form a rectangle — can\u{2019}t merge.", comment: "Non-rectangular merge rejection"))
+            mergeCandidate = nil
         }
     }
 
-    // MARK: - Feedback + footer
+    private func commitMerge(_ zones: Set<Int>) {
+        clearFeedback()
+        guard let next = working.merging(zones) else {
+            showError(NSLocalizedString("Those zones don\u{2019}t form a rectangle — can\u{2019}t merge.", tableName: "Main", value: "Those zones don\u{2019}t form a rectangle — can\u{2019}t merge.", comment: "Non-rectangular merge rejection"))
+            mergeCandidate = nil
+            return
+        }
+        pushUndoSnapshot()
+        working = next
+        mergeCandidate = nil
+    }
+
+    // MARK: - Undo / redo
+
+    private func pushUndoSnapshot() {
+        undoStack.append(working)
+        redoStack.removeAll()
+        // Any structural edit invalidates a pending merge chip.
+        mergeCandidate = nil
+    }
+
+    private func undo() {
+        guard let previous = undoStack.popLast() else { return }
+        redoStack.append(working)
+        working = previous
+        clearTransientSelection()
+    }
+
+    private func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(working)
+        working = next
+        clearTransientSelection()
+    }
+
+    private func clearTransientSelection() {
+        mergeCandidate = nil
+        hoverZone = nil
+        hoverPoint = nil
+        activeDivider = nil
+    }
+
+    // MARK: - Hint + feedback + footer
+
+    private var hintBar: some View {
+        Text(NSLocalizedString("Click a zone to split (Space to rotate). Drag across zones to merge. Drag a line to resize. \u{2318}Z to undo.", tableName: "Main", value: "Click a zone to split (Space to rotate). Drag across zones to merge. Drag a line to resize. \u{2318}Z to undo.", comment: "Editor gesture hint"))
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
     private var feedbackBar: some View {
         Text(feedback)
@@ -448,62 +684,39 @@ struct LayoutEditorView: View {
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 8) {
+            Button(NSLocalizedString("Undo", tableName: "Main", value: "Undo", comment: "")) { undo() }
+                .disabled(undoStack.isEmpty)
+            Button(NSLocalizedString("Redo", tableName: "Main", value: "Redo", comment: "")) { redo() }
+                .disabled(redoStack.isEmpty)
             Spacer()
-            cancelButton
-            saveButton
+            Button(NSLocalizedString("Cancel", tableName: "Main", value: "Cancel", comment: "")) { onClose() }
+                .keyboardShortcut(.cancelAction)
+            Button(NSLocalizedString("Save", tableName: "Main", value: "Save", comment: "")) { save() }
+                .disabled(!working.isValid)
+                .keyboardShortcut(.defaultAction)
         }
     }
 
-    @ViewBuilder
-    private var cancelButton: some View {
-        let button = Button(NSLocalizedString("Cancel", tableName: "Main", value: "Cancel", comment: "")) { onClose() }
-        if #available(macOS 11.0, *) {
-            button.keyboardShortcut(.cancelAction)
-        } else {
-            button
+    // MARK: - Keyboard shortcuts (Space rotate, ⌘Z / ⌘⇧Z, Option track)
+
+    /// Invisible buttons hosting the editor keyboard shortcuts. Kept off-screen so
+    /// they don't take canvas space; they don't grab focus from hover tracking.
+    private var keyboardShortcuts: some View {
+        ZStack {
+            Button("") { rotateSplitAxis() }
+                .keyboardShortcut(.space, modifiers: [])
+            Button("") { undo() }
+                .keyboardShortcut("z", modifiers: [.command])
+            Button("") { redo() }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
         }
+        .opacity(0)
+        .frame(width: 0, height: 0)
     }
 
-    @ViewBuilder
-    private var saveButton: some View {
-        // Save is the default button (highlighted, triggered by Return).
-        let button = Button(NSLocalizedString("Save", tableName: "Main", value: "Save", comment: "")) { save() }
-            .disabled(!working.isValid)
-        if #available(macOS 11.0, *) {
-            button.keyboardShortcut(.defaultAction)
-        } else {
-            button
-        }
-    }
-
-    /// A labeled `GroupBox` (10.15) wrapping section content with the native
-    /// grouped-section look and consistent inner padding.
-    private func editorGroupBox<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        // The group-box label uses the same bold regular-system-size weight as the
-        // AppKit panes' section headers, so the sheet reads at the app's density.
-        GroupBox(label: Text(title).font(.system(size: NSFont.systemFontSize, weight: .bold))) {
-            content()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 4)
-        }
-    }
-
-    // MARK: - Selection state
-
-    private var canUnmergeSelection: Bool {
-        // Unmerge is meaningful for a single selected zone that spans >1 cell.
-        guard selectedZones.count == 1, let z = selectedZones.first else { return false }
-        return working.cellZones.filter { $0 == z }.count > 1
-    }
-
-    private func toggleZoneSelection(_ zoneId: Int) {
-        clearFeedback()
-        if selectedZones.contains(zoneId) {
-            selectedZones.remove(zoneId)
-        } else {
-            selectedZones.insert(zoneId)
-        }
+    private func rotateSplitAxis() {
+        splitAxis = splitAxis == .vertical ? .horizontal : .vertical
     }
 
     // MARK: - Feedback helpers
@@ -518,203 +731,7 @@ struct LayoutEditorView: View {
         feedbackIsError = false
     }
 
-    // MARK: - Per-track ratio actions
-
-    /// Commit a typed number into the COLUMN ratio field at `index`: resize ONLY
-    /// that column, keeping every other column's proportion (and all merges, since
-    /// the track count is unchanged). The base ratio array is the DISPLAYED
-    /// small-integer ratios — what the fields show — with `index` replaced by the
-    /// entered value, so "type 2 into a field showing 1" gives the intuitive 2:1:1
-    /// rather than weighting against the raw fractional widths. The same-count
-    /// `settingColumnRatios` path repositions boundaries and preserves merges.
-    /// Invalid input (empty / non-numeric / non-positive) is a no-op with inline
-    /// feedback; the boundaries change but not the track count, so the selection
-    /// stays valid and is preserved.
-    private func applyColumnRatio(atIndex index: Int, _ string: String) {
-        guard let value = parsePositiveNumber(string) else {
-            showError(invalidNumberMessage)
-            return
-        }
-        let next: ZoneLayout?
-        if ZoneLayout.cleanIntegerRatio(from: working.currentColumnRatios) == nil {
-            // FREEFORM axis: one typed number rebuilds a clean ratio by anchoring
-            // this track at the value and rounding the others' proportions.
-            next = working.reassemblingColumns(atIndex: index, to: value)
-        } else {
-            // CLEAN axis: the existing per-track behavior — the displayed clean
-            // integers with this index replaced, re-applied (same count -> merges
-            // preserved). Typing 3 into the first of 1:2:1 gives 3:2:1.
-            let base = displayRatios(working.currentColumnRatios)
-            guard index >= 0, index < base.count else { return }
-            var ratios = base
-            ratios[index] = value
-            next = working.settingColumnRatios(ratios)
-        }
-        guard let result = next else {
-            showError(NSLocalizedString("Couldn\u{2019}t apply that column size.", tableName: "Main", value: "Couldn\u{2019}t apply that column size.", comment: "Per-track ratio apply failed"))
-            return
-        }
-        clearFeedback()
-        // Defer the working-copy swap to the next runloop tick. This applies while
-        // the field is focused (live apply); deferring the `working` swap keeps the
-        // external value/recreation out of the same synchronous turn as the edit,
-        // a belt-and-suspenders guard against the prior 100%-CPU render loop (the
-        // field's own focus-gated re-seed is the primary fix).
-        DispatchQueue.main.async { working = result }
-    }
-
-    /// Apply a typed number into the ROW ratio field at `index`. Same contract as
-    /// `applyColumnRatio`, on the row axis (clean -> per-track replace; freeform ->
-    /// reassemble).
-    private func applyRowRatio(atIndex index: Int, _ string: String) {
-        guard let value = parsePositiveNumber(string) else {
-            showError(invalidNumberMessage)
-            return
-        }
-        let next: ZoneLayout?
-        if ZoneLayout.cleanIntegerRatio(from: working.currentRowRatios) == nil {
-            next = working.reassemblingRows(atIndex: index, to: value)
-        } else {
-            let base = displayRatios(working.currentRowRatios)
-            guard index >= 0, index < base.count else { return }
-            var ratios = base
-            ratios[index] = value
-            next = working.settingRowRatios(ratios)
-        }
-        guard let result = next else {
-            showError(NSLocalizedString("Couldn\u{2019}t apply that row size.", tableName: "Main", value: "Couldn\u{2019}t apply that row size.", comment: "Per-track ratio apply failed"))
-            return
-        }
-        clearFeedback()
-        // Deferred to the next runloop tick — see applyColumnRatio.
-        DispatchQueue.main.async { working = result }
-    }
-
-    /// Parse a single positive finite number from a field's text. Returns `nil`
-    /// for empty / non-numeric / zero / negative input (the no-op case).
-    private func parsePositiveNumber(_ string: String) -> Double? {
-        let trimmed = string.trimmingCharacters(in: .whitespaces)
-        guard let value = Double(trimmed), value.isFinite, value > 0 else { return nil }
-        return value
-    }
-
-    /// The base ratio array used when committing one field — the SAME values the
-    /// fields display (the small-integer reduction via `trackIntegerRatios`),
-    /// parsed back to numbers, so editing one field is consistent with the shown
-    /// numbers. Falls back to the raw proportions if the displayed labels don't
-    /// parse 1:1 (e.g. a decimal fallback readout).
-    private func displayRatios(_ proportions: [Double]) -> [Double] {
-        let labels = trackIntegerRatios(proportions)
-        let parsed = labels.compactMap { Double($0) }
-        if parsed.count == proportions.count, parsed.allSatisfy({ $0 > 0 }) {
-            return parsed
-        }
-        return proportions
-    }
-
-    private var invalidNumberMessage: String {
-        NSLocalizedString("Enter a positive number.", tableName: "Main", value: "Enter a positive number.", comment: "Invalid per-track ratio input")
-    }
-
-    // MARK: - Edit actions (all run a pure op on `working`)
-
-    /// Add a column on the RIGHT, keeping every existing column's ratio (the
-    /// numbers you didn't change stay put): a clean axis appends a unit (1) column
-    /// — so 1:2:1 becomes 1:2:1:1 — and a freeform axis appends an average-sized
-    /// column so the other tracks keep their relative sizes.
-    private func addColumn() {
-        applyTrackRatios(axis: .column, appendedRatios(working.currentColumnRatios), failure: "Could not add a column.")
-    }
-
-    /// Add a row at the BOTTOM, keeping every existing row's ratio (same rule).
-    private func addRow() {
-        applyTrackRatios(axis: .row, appendedRatios(working.currentRowRatios), failure: "Could not add a row.")
-    }
-
-    /// Remove the RIGHTMOST column, keeping the remaining columns' ratios. No-op at
-    /// one column.
-    private func removeColumn() {
-        guard working.cols > 1 else { return }
-        applyTrackRatios(axis: .column, droppedLastRatio(working.currentColumnRatios), failure: "Could not remove a column.")
-    }
-
-    /// Remove the BOTTOM row, keeping the remaining rows' ratios. No-op at one row.
-    private func removeRow() {
-        guard working.rows > 1 else { return }
-        applyTrackRatios(axis: .row, droppedLastRatio(working.currentRowRatios), failure: "Could not remove a row.")
-    }
-
-    /// Ratio array for ADDING a track: a clean axis keeps its integer ratio and
-    /// appends a unit (1); a freeform axis keeps its raw proportions and appends an
-    /// average-sized track (so the others keep their relative sizes).
-    private func appendedRatios(_ proportions: [Double]) -> [Double] {
-        if let ints = ZoneLayout.cleanIntegerRatio(from: proportions) {
-            return ints.map(Double.init) + [1]
-        }
-        let avg = proportions.isEmpty ? 1 : proportions.reduce(0, +) / Double(proportions.count)
-        return proportions + [avg]
-    }
-
-    /// Ratio array for REMOVING the last track: drop the last value from the
-    /// integer ratio (clean) or the raw proportions (freeform); the rest keep their
-    /// ratios when re-applied.
-    private func droppedLastRatio(_ proportions: [Double]) -> [Double] {
-        let base = ZoneLayout.cleanIntegerRatio(from: proportions)?.map(Double.init) ?? proportions
-        return Array(base.dropLast())
-    }
-
-    /// Apply a whole-axis ratio array (add/remove), updating the working copy +
-    /// resetting selection on success, or showing `failure` on an invalid result.
-    private func applyTrackRatios(axis: DividerAxis, _ ratios: [Double], failure: String) {
-        let next = axis == .column ? working.settingColumnRatios(ratios) : working.settingRowRatios(ratios)
-        if let next = next {
-            working = next
-            resetSelectionAfterStructuralEdit()
-            clearFeedback()
-        } else {
-            showError(NSLocalizedString(failure, tableName: "Main", value: failure, comment: "Add/remove track failed"))
-        }
-    }
-
-    private func removeSelectedDivider() {
-        guard let divider = selectedDivider else { return }
-        let result: ZoneLayout?
-        switch divider.axis {
-        case .column: result = working.removingColumnBoundary(at: divider.index)
-        case .row:    result = working.removingRowBoundary(at: divider.index)
-        }
-        if let next = result {
-            working = next
-            resetSelectionAfterStructuralEdit()
-        } else {
-            showError(NSLocalizedString("That divider can't be removed.", tableName: "Main", value: "That divider can't be removed.", comment: ""))
-        }
-    }
-
-    private func mergeSelection() {
-        guard selectedZones.count >= 2 else { return }
-        if let next = working.merging(selectedZones) {
-            working = next
-            resetSelectionAfterStructuralEdit()
-        } else {
-            showError(NSLocalizedString("Those zones don't form a rectangle — can't merge.", tableName: "Main", value: "Those zones don't form a rectangle — can't merge.", comment: "Non-rectangular merge rejection"))
-        }
-    }
-
-    private func unmergeSelection() {
-        guard selectedZones.count == 1, let z = selectedZones.first else { return }
-        if let next = working.unmerging(z) {
-            working = next
-            resetSelectionAfterStructuralEdit()
-        }
-    }
-
-    private func resetSelectionAfterStructuralEdit() {
-        // Ids shift after a structural edit — drop stale selection so we never
-        // act on an id that no longer exists.
-        selectedZones = []
-        selectedDivider = nil
-    }
+    // MARK: - Save
 
     private func save() {
         guard working.isValid else {
@@ -760,94 +777,5 @@ struct LayoutEditorView: View {
             return (CGSize(width: pts.width * scale, height: pts.height * scale), true)
         }
         return (CGSize(width: 1920, height: 1080), false)
-    }
-}
-
-// MARK: - Per-track ratio field
-
-/// A single small number field for ONE column or row track. It keeps the
-/// in-progress text in its OWN local `@State` and APPLIES LIVE as the user types
-/// (`.onChange(of: text)` -> `onApply` whenever the text parses to a positive
-/// number), not only on Return.
-///
-/// FREEZE SAFETY (the prior 100%-CPU loop): the field must NEVER be re-seeded /
-/// recreated WHILE it is the first responder — that recreation-mid-edit thrashed
-/// AppKit's end-editing cycle. So:
-///   - there is NO `.id(value)` (which recreated the field on every external
-///     value change), and
-///   - the external `value` is re-seeded into `text` ONLY when the field is NOT
-///     focused (`.onChange(of: value) { if !isFocused { … } }`), so an idle
-///     field still tracks a divider drag but a focused field is never interrupted.
-///
-/// When the axis is FREEFORM (`isFreeform`), the field renders GREYED showing an
-/// em-dash placeholder instead of a number (the "ratios not in use" state); it is
-/// still editable — typing a number reassembles a clean ratio via `onApply`.
-///
-/// `@FocusState` is macOS 12+ (the deployment target is 13.0). `.onChange` is 11+.
-private struct TrackRatioField: View {
-    let value: String
-    let isFreeform: Bool
-    let onApply: (String) -> Void
-
-    @State private var text: String
-    @FocusState private var isFocused: Bool
-
-    /// The em-dash shown (greyed) for a freeform track when not being edited.
-    private static let freeformPlaceholder = "\u{2014}"
-
-    init(value: String, isFreeform: Bool, onApply: @escaping (String) -> Void) {
-        self.value = value
-        self.isFreeform = isFreeform
-        self.onApply = onApply
-        // Seed greyed dash for freeform; otherwise the clean integer.
-        _text = State(initialValue: isFreeform ? TrackRatioField.freeformPlaceholder : value)
-    }
-
-    var body: some View {
-        TextField("", text: $text)
-            .textFieldStyle(RoundedBorderTextFieldStyle())
-            .font(.system(size: 11, design: .monospaced))
-            .multilineTextAlignment(.center)
-            .foregroundColor(showsGreyedDash ? .secondary : .primary)
-            .focused($isFocused)
-            // LIVE APPLY: apply whenever the typed text parses to a positive
-            // number. Empty / non-numeric text is a silent no-op (no error spam
-            // mid-typing). Routes through onApply so clean-vs-freeform branching
-            // and the error feedback in the parent still apply.
-            .onChange(of: text) { newValue in
-                guard isFocused else { return }
-                let trimmed = newValue.trimmingCharacters(in: .whitespaces)
-                if let n = Double(trimmed), n.isFinite, n > 0 {
-                    onApply(trimmed)
-                }
-            }
-            // Re-seed from the external value ONLY while NOT focused, so a divider
-            // drag updates an idle field but never interrupts typing (and the field
-            // is never recreated mid-edit — the prior freeze).
-            .onChange(of: value) { newValue in
-                if !isFocused { text = isFreeform ? TrackRatioField.freeformPlaceholder : newValue }
-            }
-            // When the axis flips freeform<->clean externally (and we're idle),
-            // reflect the dash<->number change.
-            .onChange(of: isFreeform) { nowFreeform in
-                if !isFocused { text = nowFreeform ? TrackRatioField.freeformPlaceholder : value }
-            }
-            // On focus-IN of a freeform field, clear the dash placeholder so the
-            // user types into an empty field (not after the em-dash). On focus-OUT,
-            // snap back to the canonical display (clean integer, or the dash for a
-            // still-freeform axis) so partial / cleared text doesn't linger.
-            .onChange(of: isFocused) { focused in
-                if focused {
-                    if text == TrackRatioField.freeformPlaceholder { text = "" }
-                } else {
-                    text = isFreeform ? TrackRatioField.freeformPlaceholder : value
-                }
-            }
-    }
-
-    /// Show the greyed dash when the axis is freeform AND the field isn't being
-    /// actively typed into (the placeholder hasn't been replaced by a number).
-    private var showsGreyedDash: Bool {
-        isFreeform && text == TrackRatioField.freeformPlaceholder
     }
 }
