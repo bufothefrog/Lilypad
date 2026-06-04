@@ -55,46 +55,22 @@ class GridModel {
         ZoneLayout.grid2x2(id: "lilypad.default.2x2", name: "2 × 2")
     }
 
-    // MARK: - Persistence helpers (fresh read / lenient decode)
+    // MARK: - Persistence (mirrors SnapAreaModel's per-display model)
 
-    private static let gridLayoutsKey = "gridLayoutsByDisplay"
-
-    /// The CURRENT on-disk layouts dict, read FRESH from `UserDefaults` rather than
-    /// `JSONDefault`'s load-once `typedValue` cache. Every mutation below uses this
-    /// as its copy-mutate-writeback base so a write can never clobber entries that
-    /// another process — or an earlier session this process's cache never saw —
-    /// wrote to disk (the relaunch data-loss bug).
-    ///
-    /// LENIENT: a strict whole-dict decode that fails (one schema-drifted entry)
-    /// used to nil the ENTIRE dict via `try?` and let the next write seed a 1-entry
-    /// dict, wiping everything. So on a strict-decode failure we fall back to
-    /// decoding each display entry independently and keep every one that still
-    /// decodes — a single bad entry costs only itself, never the whole set.
+    /// Per-display layouts, read/written through the `JSONDefault` cache exactly like
+    /// `SnapAreaModel` accesses `snapAreasByDisplay` — the per-monitor mechanism that
+    /// has worked reliably since the original fork. Every mutation reads the whole
+    /// cache, changes one display, and writes the whole cache back, so the in-memory
+    /// cache (loaded once at launch) stays the source of truth and any single write
+    /// preserves every other monitor's layouts. The previous relaunch data loss came
+    /// from the GRID-SPECIFIC extra writes (seeding on launch + on every drag), not
+    /// this access pattern — those are gone (see `ensureActiveLayout` / AppDelegate),
+    /// so writes are now as rare as snap-area overrides.
     private func currentByDisplay() -> [String: PerDisplayLayouts] {
-        guard let json = UserDefaults.standard.string(forKey: Self.gridLayoutsKey),
-              let data = json.data(using: .utf8) else { return [:] }
-        if let dict = try? JSONDecoder().decode([String: PerDisplayLayouts].self, from: data) {
-            return dict
-        }
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
-        var result: [String: PerDisplayLayouts] = [:]
-        for (uuid, value) in object {
-            if let entryData = try? JSONSerialization.data(withJSONObject: value),
-               let decoded = try? JSONDecoder().decode(PerDisplayLayouts.self, from: entryData) {
-                result[uuid] = decoded
-            }
-        }
-        return result
+        Defaults.gridLayoutsByDisplay.typedValue ?? [:]
     }
 
-    /// Persist `byDisplay` to disk (authoritatively, via `UserDefaults`) and keep
-    /// the `JSONDefault` cache coherent so fast readers stay in sync.
     private func writeByDisplay(_ byDisplay: [String: PerDisplayLayouts]) {
-        if let data = try? JSONEncoder().encode(byDisplay),
-           let json = String(data: data, encoding: .utf8) {
-            UserDefaults.standard.set(json, forKey: Self.gridLayoutsKey)
-        }
-        // Keep the JSONDefault load-once cache coherent for fast readers.
         Defaults.gridLayoutsByDisplay.typedValue = byDisplay
     }
 
