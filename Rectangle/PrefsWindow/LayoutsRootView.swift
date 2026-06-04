@@ -42,6 +42,10 @@ struct LayoutsRootView: View {
     // no sheet. Identifiable so `.sheet(item:)` (10.15) drives presentation.
     @State private var editingLayout: ZoneLayout? = nil
 
+    // The layout awaiting a Remove confirmation (`nil` = no prompt). Removal is
+    // destructive and has no in-pane undo, so we confirm before deleting.
+    @State private var layoutPendingRemoval: ZoneLayout? = nil
+
     // Visual conventions extracted from the AppKit prefs panes (Settings / Snap
     // Areas scenes in Main.storyboard): a single fixed-width content column,
     // centered, with standard outer margins, rows spaced 10pt apart within a
@@ -145,6 +149,22 @@ struct LayoutsRootView: View {
                 }
             }
         }
+        .alert(
+            NSLocalizedString("Remove layout?", tableName: "Main", value: "Remove layout?", comment: "Remove layout confirmation title"),
+            isPresented: Binding(get: { layoutPendingRemoval != nil },
+                                 set: { if !$0 { layoutPendingRemoval = nil } }),
+            presenting: layoutPendingRemoval
+        ) { layout in
+            Button(NSLocalizedString("Remove", tableName: "Main", value: "Remove", comment: ""), role: .destructive) {
+                model.removeLayout(id: layout.id)
+                layoutPendingRemoval = nil
+            }
+            Button(NSLocalizedString("Cancel", tableName: "Main", value: "Cancel", comment: ""), role: .cancel) {
+                layoutPendingRemoval = nil
+            }
+        } message: { layout in
+            Text(String(format: NSLocalizedString("“%@” will be removed from this monitor. This can’t be undone.", tableName: "Main", value: "“%@” will be removed from this monitor. This can’t be undone.", comment: "Remove layout confirmation message"), layout.name))
+        }
     }
 
     /// The "Add…" button. Tapping it opens a `.popover` with a hover-to-pick grid
@@ -200,7 +220,7 @@ struct LayoutsRootView: View {
             }
 
             Button(NSLocalizedString("Remove", tableName: "Main", value: "Remove", comment: "")) {
-                model.removeLayout(id: layout.id)
+                layoutPendingRemoval = layout
             }
         }
     }

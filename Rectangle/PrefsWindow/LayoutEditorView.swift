@@ -99,6 +99,8 @@ struct LayoutEditorView: View {
 
     /// The interior divider currently being dragged (for highlight), or nil.
     @State private var activeDivider: DividerRef? = nil
+    /// The edge segment currently hovered (for the grab-cue highlight), or nil.
+    @State private var hoveredDivider: DividerRef? = nil
     /// Whether the current divider drag has pushed a snapshot yet (so a drag pushes
     /// exactly one undo entry, not one per frame).
     @State private var dividerDragSnapshotted: Bool = false
@@ -366,35 +368,106 @@ struct LayoutEditorView: View {
     }
 
     // MARK: - Divider handles (resize)
+    //
+    // Handles lie on ACTUAL zone edges only — a run of an interior boundary where
+    // the cells on either side belong to DIFFERENT zones. A boundary stretch that
+    // merely passes THROUGH a merged zone (same zone both sides) draws nothing, so
+    // the only lines shown / grabbable are the real seams between zones (not the
+    // underlying cell grid, which used to make merged zones look split).
 
     @ViewBuilder
     private func dividerHandles(local: CGRect) -> some View {
-        ForEach(interiorColumnIndices, id: \.self) { idx in
-            columnHandle(index: idx, local: local)
+        ForEach(columnEdgeSegments, id: \.id) { seg in
+            edgeHandle(seg, local: local)
         }
-        ForEach(interiorRowIndices, id: \.self) { idx in
-            rowHandle(index: idx, local: local)
+        ForEach(rowEdgeSegments, id: \.id) { seg in
+            edgeHandle(seg, local: local)
         }
     }
 
-    private var interiorColumnIndices: [Int] {
-        guard working.colBoundaries.count > 2 else { return [] }
-        return Array(1...(working.colBoundaries.count - 2))
-    }
-    private var interiorRowIndices: [Int] {
-        guard working.rowBoundaries.count > 2 else { return [] }
-        return Array(1...(working.rowBoundaries.count - 2))
+    /// One contiguous run of an interior boundary that separates two different
+    /// zones. `startFraction`/`endFraction` span the run along the PERPENDICULAR
+    /// axis (row fractions for a column edge, column fractions for a row edge).
+    private struct EdgeSegment: Equatable {
+        let id: String
+        let axis: DividerAxis
+        let boundaryIndex: Int
+        let startFraction: Double
+        let endFraction: Double
     }
 
-    private func columnHandle(index: Int, local: CGRect) -> some View {
-        let x = CGFloat(working.colBoundaries[index]) * local.width
-        let isActive = activeDivider == DividerRef(axis: .column, index: index)
+    /// Vertical boundaries split into the row-runs where left ≠ right zone.
+    private var columnEdgeSegments: [EdgeSegment] {
+        let cols = working.cols, rows = working.rows
+        guard cols >= 2, rows >= 1, working.cellZones.count == cols * rows else { return [] }
+        var segments: [EdgeSegment] = []
+        for c in 1...(cols - 1) {
+            var runStart: Int? = nil
+            for r in 0..<rows {
+                let isEdge = working.cellZones[r * cols + (c - 1)] != working.cellZones[r * cols + c]
+                if isEdge, runStart == nil { runStart = r }
+                if !isEdge, let s = runStart {
+                    segments.append(EdgeSegment(id: "col-\(c)-\(s)", axis: .column, boundaryIndex: c,
+                                                startFraction: working.rowBoundaries[s], endFraction: working.rowBoundaries[r]))
+                    runStart = nil
+                }
+            }
+            if let s = runStart {
+                segments.append(EdgeSegment(id: "col-\(c)-\(s)", axis: .column, boundaryIndex: c,
+                                            startFraction: working.rowBoundaries[s], endFraction: working.rowBoundaries[rows]))
+            }
+        }
+        return segments
+    }
+
+    /// Horizontal boundaries split into the column-runs where top ≠ bottom zone.
+    private var rowEdgeSegments: [EdgeSegment] {
+        let cols = working.cols, rows = working.rows
+        guard rows >= 2, cols >= 1, working.cellZones.count == cols * rows else { return [] }
+        var segments: [EdgeSegment] = []
+        for r in 1...(rows - 1) {
+            var runStart: Int? = nil
+            for c in 0..<cols {
+                let isEdge = working.cellZones[(r - 1) * cols + c] != working.cellZones[r * cols + c]
+                if isEdge, runStart == nil { runStart = c }
+                if !isEdge, let s = runStart {
+                    segments.append(EdgeSegment(id: "row-\(r)-\(s)", axis: .row, boundaryIndex: r,
+                                                startFraction: working.colBoundaries[s], endFraction: working.colBoundaries[c]))
+                    runStart = nil
+                }
+            }
+            if let s = runStart {
+                segments.append(EdgeSegment(id: "row-\(r)-\(s)", axis: .row, boundaryIndex: r,
+                                            startFraction: working.colBoundaries[s], endFraction: working.colBoundaries[cols]))
+            }
+        }
+        return segments
+    }
+
+    /// A draggable resize handle on one edge segment. It highlights in the accent
+    /// color when hovered or actively dragged (the grab cue). Dragging moves the
+    /// whole boundary line — every zone bounded by it shifts together; a merged zone
+    /// the line only passes through is unaffected, since its outer edges don't move.
+    private func edgeHandle(_ seg: EdgeSegment, local: CGRect) -> some View {
+        let ref = DividerRef(axis: seg.axis, index: seg.boundaryIndex)
+        let highlight = activeDivider == ref || hoveredDivider == ref
+        let isColumn = seg.axis == .column
+        let alongSize = isColumn ? local.height : local.width
+        let along0 = CGFloat(seg.startFraction) * alongSize
+        let along1 = CGFloat(seg.endFraction) * alongSize
+        let length = max(along1 - along0, 1)
+        let thickness: CGFloat = highlight ? 3 : 2
+        let position = isColumn
+            ? CGPoint(x: CGFloat(working.colBoundaries[seg.boundaryIndex]) * local.width, y: (along0 + along1) / 2)
+            : CGPoint(x: (along0 + along1) / 2, y: CGFloat(working.rowBoundaries[seg.boundaryIndex]) * local.height)
+
         return Rectangle()
-            .fill(isActive ? Color.accentColor : Color(NSColor.separatorColor))
-            .frame(width: isActive ? 4 : 2, height: local.height)
-            .frame(width: 11)
+            .fill(highlight ? Color.accentColor : Color(NSColor.separatorColor))
+            .frame(width: isColumn ? thickness : length, height: isColumn ? length : thickness)
+            .frame(width: isColumn ? 11 : length, height: isColumn ? length : 11)
             .contentShape(Rectangle())
-            .position(x: x, y: local.height / 2)
+            .position(position)
+            .onHover { inside in hoveredDivider = inside ? ref : (hoveredDivider == ref ? nil : hoveredDivider) }
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
@@ -402,42 +475,13 @@ struct LayoutEditorView: View {
                             pushUndoSnapshot()
                             dividerDragSnapshotted = true
                         }
-                        activeDivider = DividerRef(axis: .column, index: index)
-                        let raw = Double(value.location.x / local.width)
-                        let snapped = ZoneLayout.snapFraction(raw)
-                        if let next = working.movingColumnBoundary(at: index, to: snapped) {
-                            working = next
-                        }
-                    }
-                    .onEnded { _ in
-                        activeDivider = nil
-                        dividerDragSnapshotted = false
-                    }
-            )
-    }
-
-    private func rowHandle(index: Int, local: CGRect) -> some View {
-        // rowBoundaries are measured from the TOP, SwiftUI y is top-down — no flip.
-        let y = CGFloat(working.rowBoundaries[index]) * local.height
-        let isActive = activeDivider == DividerRef(axis: .row, index: index)
-        return Rectangle()
-            .fill(isActive ? Color.accentColor : Color(NSColor.separatorColor))
-            .frame(width: local.width, height: isActive ? 4 : 2)
-            .frame(height: 11)
-            .contentShape(Rectangle())
-            .position(x: local.width / 2, y: y)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if !dividerDragSnapshotted {
-                            pushUndoSnapshot()
-                            dividerDragSnapshotted = true
-                        }
-                        activeDivider = DividerRef(axis: .row, index: index)
-                        let raw = Double(value.location.y / local.height)
-                        let snapped = ZoneLayout.snapFraction(raw)
-                        if let next = working.movingRowBoundary(at: index, to: snapped) {
-                            working = next
+                        activeDivider = ref
+                        if isColumn {
+                            let snapped = ZoneLayout.snapFraction(Double(value.location.x / local.width))
+                            if let next = working.movingColumnBoundary(at: seg.boundaryIndex, to: snapped) { working = next }
+                        } else {
+                            let snapped = ZoneLayout.snapFraction(Double(value.location.y / local.height))
+                            if let next = working.movingRowBoundary(at: seg.boundaryIndex, to: snapped) { working = next }
                         }
                     }
                     .onEnded { _ in
