@@ -142,10 +142,14 @@ struct LayoutsRootView: View {
             } else if model.layouts.isEmpty {
                 secondaryText(NSLocalizedString("No layouts yet. Use Add to create one.", tableName: "Main", value: "No layouts yet. Use Add to create one.", comment: "No layouts for display"))
             } else {
-                VStack(spacing: Metrics.rowSpacing) {
-                    ForEach(model.layouts, id: \.id) { layout in
-                        layoutRow(layout)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ForEach(model.layouts, id: \.id) { layout in
+                            layoutCard(layout)
+                        }
                     }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 1)
                 }
             }
         }
@@ -183,46 +187,58 @@ struct LayoutsRootView: View {
         }
     }
 
-    private func layoutRow(_ layout: ZoneLayout) -> some View {
+    /// One layout as a card: a live grid PREVIEW (click to edit) with a ✕ remove
+    /// button in the corner, and below it an active radio + the editable name. The
+    /// active layout's preview gets an accent ring.
+    private func layoutCard(_ layout: ZoneLayout) -> some View {
         let isActive = layout.id == model.activeLayoutId
-        return HStack(spacing: 8) {
-            // Active marker (a filled accent circle when active, hollow otherwise).
-            Circle()
-                .strokeBorder(isActive ? Color.accentColor : Color.secondary, lineWidth: 1.5)
-                .background(Circle().fill(isActive ? Color.accentColor : Color.clear))
-                .frame(width: 12, height: 12)
-                .onTapGesture { model.makeActive(id: layout.id) }
+        return VStack(spacing: 6) {
+            ZStack(alignment: .topTrailing) {
+                LayoutThumbnail(layout: layout)
+                    .frame(width: 104, height: 64)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(isActive ? Color.accentColor : Color(NSColor.separatorColor),
+                                    lineWidth: isActive ? 2 : 1)
+                    )
+                    .contentShape(Rectangle())
+                    // Click the preview to open the editor.
+                    .onTapGesture { editingLayout = layout }
+                    .help(NSLocalizedString("Click to edit this layout", tableName: "Main", value: "Click to edit this layout", comment: "Layout card edit hint"))
 
-            // Editable name. Edits live in the row's own local state and only
-            // commit (through the model) on return / focus loss, so typing never
-            // re-serializes Defaults per keystroke or replaces the array the
-            // enclosing ForEach is iterating mid-edit.
-            LayoutNameField(
-                name: layout.name,
-                onCommit: { model.renameLayout(id: layout.id, to: $0) }
-            )
-            .frame(maxWidth: 200)
-
-            Text("\(layout.cols)×\(layout.rows)")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-
-            Spacer()
-
-            Button(NSLocalizedString("Make Active", tableName: "Main", value: "Make Active", comment: "")) {
-                model.makeActive(id: layout.id)
-            }
-            .disabled(isActive)
-
-            // M15 FancyZones canvas editor — opens the sheet on the working copy.
-            Button(NSLocalizedString("Edit…", tableName: "Main", value: "Edit…", comment: "")) {
-                editingLayout = layout
+                // ✕ remove (confirms before deleting).
+                Button(action: { layoutPendingRemoval = layout }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color(NSColor.secondaryLabelColor))
+                        .background(Circle().fill(Color(NSColor.controlBackgroundColor)).padding(1))
+                }
+                .buttonStyle(.plain)
+                .padding(3)
+                .help(NSLocalizedString("Remove", tableName: "Main", value: "Remove", comment: ""))
             }
 
-            Button(NSLocalizedString("Remove", tableName: "Main", value: "Remove", comment: "")) {
-                layoutPendingRemoval = layout
+            HStack(spacing: 5) {
+                // Active radio — click to make this layout active.
+                Button(action: { model.makeActive(id: layout.id) }) {
+                    Image(systemName: isActive ? "largecircle.fill.circle" : "circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(isActive ? Color.accentColor : Color(NSColor.tertiaryLabelColor))
+                }
+                .buttonStyle(.plain)
+                .help(NSLocalizedString("Make Active", tableName: "Main", value: "Make Active", comment: ""))
+
+                // Editable name. Commits on return / focus loss (never per keystroke).
+                LayoutNameField(
+                    name: layout.name,
+                    onCommit: { model.renameLayout(id: layout.id, to: $0) }
+                )
+                .frame(maxWidth: 84)
             }
         }
+        .frame(width: 116)
     }
 
     // MARK: - Grid settings
@@ -365,6 +381,38 @@ struct LayoutsRootView: View {
         Text(string)
             .font(.system(size: 11))
             .foregroundColor(.secondary)
+    }
+}
+
+// MARK: - Layout thumbnail
+
+/// A small live preview of a `ZoneLayout`: each zone drawn as a filled tile in the
+/// card's aspect, using the same `GridCalculation` geometry as the runtime overlay
+/// and the editor (so merged zones render as one tile).
+private struct LayoutThumbnail: View {
+    let layout: ZoneLayout
+
+    var body: some View {
+        GeometryReader { geo in
+            let local = CGRect(x: 0, y: 0, width: geo.size.width, height: geo.size.height)
+            ForEach(layout.zoneIds, id: \.self) { zoneId in
+                let cocoa = GridCalculation.zoneRect(layout: layout, zoneId: zoneId, in: local)
+                // Flip Cocoa bottom-left → SwiftUI top-left.
+                let frame = CGRect(x: cocoa.minX,
+                                   y: local.height - cocoa.maxY,
+                                   width: cocoa.width,
+                                   height: cocoa.height)
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color(NSColor.unemphasizedSelectedContentBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .stroke(Color(NSColor.separatorColor), lineWidth: 0.5)
+                    )
+                    .frame(width: max(frame.width - 1.5, 0), height: max(frame.height - 1.5, 0))
+                    .position(x: frame.midX, y: frame.midY)
+            }
+        }
+        .padding(3)
     }
 }
 
