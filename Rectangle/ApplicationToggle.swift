@@ -78,14 +78,20 @@ class ApplicationToggle: NSObject {
             disabledApps.insert(appBundleId)
             saveDisabledApps()
             disableShortcuts()
+            // SnappingManager no longer pauses its event monitor off the
+            // `windowSnapping` notification (that now governs only edge snap), so
+            // re-post `frontAppChanged` to make it re-evaluate `allowListening` from
+            // the app-ignore state when the CURRENT app is toggled from the menu.
+            Notification.Name.frontAppChanged.post()
         }
     }
-    
+
     public func enableApp(appBundleId: String? = frontAppId) {
         if let appBundleId {
             disabledApps.remove(appBundleId)
             saveDisabledApps()
             enableShortcuts()
+            Notification.Name.frontAppChanged.post()
         }
     }
     

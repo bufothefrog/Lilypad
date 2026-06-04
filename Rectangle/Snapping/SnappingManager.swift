@@ -79,15 +79,25 @@ class SnappingManager {
         // launch, not on the first drag.
         _ = DisplayRegistry.instance
 
-        if Defaults.windowSnapping.enabled != false {
-            enableSnapping()
-        }
+        // The Lilypad grid drag path (Shift-activated) ALWAYS needs the event
+        // monitor and is independent of `windowSnapping`, which now governs ONLY the
+        // classic edge-snap branch (see `handle`). So install the monitor regardless
+        // of `windowSnapping`; fullscreen / app-ignore still gate it via
+        // `toggleListening` + `frontAppChanged`.
+        enableSnapping()
 
         registerWorkspaceChangeNote()
-        
-        Notification.Name.windowSnapping.onPost { notification in
-            if let enabled = notification.object as? Bool {
-                self.allowListening = enabled
+
+        Notification.Name.windowSnapping.onPost { _ in
+            // `windowSnapping` ("Snap windows by dragging" / the macOS-tiling
+            // "Disable in Lilypad" choice) now governs ONLY the classic edge-snap
+            // branch, so it must NOT stop the monitor — the Shift grid always needs
+            // it. We therefore no longer flip `allowListening` here (app-ignore still
+            // pauses the whole monitor through `frontAppChanged`); we only drop a
+            // lingering edge preview when edge snap was just turned off.
+            if Defaults.windowSnapping.userDisabled, self.currentSnapArea != nil {
+                self.box?.orderOut(nil)
+                self.currentSnapArea = nil
             }
             self.toggleListening()
         }
@@ -121,7 +131,10 @@ class SnappingManager {
     }
     
     func toggleListening() {
-        if allowListening, !isFullScreen, !Defaults.windowSnapping.userDisabled {
+        // `windowSnapping` no longer gates the monitor (the grid needs it regardless);
+        // only fullscreen and app-ignore (`allowListening`) do. The `windowSnapping`
+        // setting suppresses just the edge-snap branch inside `handle`.
+        if allowListening, !isFullScreen {
             enableSnapping()
         } else {
             disableSnapping()
@@ -143,19 +156,17 @@ class SnappingManager {
     }
         
     public func reloadFromDefaults() {
-        if Defaults.windowSnapping.userDisabled {
-            if eventMonitor?.running == true {
-                disableSnapping()
+        // `windowSnapping` governs only the edge-snap branch now, not the monitor, so
+        // a disabled `windowSnapping` no longer tears the monitor down. Keep it running
+        // (subject to fullscreen / app-ignore via `toggleListening`) and just swap the
+        // mission-control monitor flavor if that setting changed.
+        if eventMonitor?.running == true {
+            if Defaults.missionControlDragging.userDisabled != (eventMonitor is ActiveEventMonitor) {
+                stopEventMonitor()
+                startEventMonitor()
             }
         } else {
-            if eventMonitor?.running == true {
-                if Defaults.missionControlDragging.userDisabled != (eventMonitor is ActiveEventMonitor) {
-                    stopEventMonitor()
-                    startEventMonitor()
-                }
-            } else {
-                enableSnapping()
-            }
+            toggleListening()
         }
     }
     
@@ -385,11 +396,15 @@ class SnappingManager {
                 lastWindowIdAttempt = nil
                 return
             }
-            // Not grid mode: ensure no grid overlay lingers, then run the classic
-            // edge-snap commit unchanged.
+            // Not grid mode. The classic edge-snap COMMIT runs only when edge snap is
+            // enabled (`windowSnapping`); the Shift grid above already committed. When
+            // edge snap is off, releasing a plain drag just leaves the window where it
+            // was dropped — but `unsnapRestore` still runs so a window dragged off any
+            // prior snap restores its size.
             clearGridPreview()
 
-            if let currentSnapArea = self.currentSnapArea {
+            let edgeSnapEnabled = !Defaults.windowSnapping.userDisabled
+            if edgeSnapEnabled, let currentSnapArea = self.currentSnapArea {
                 box?.orderOut(nil)
                 currentSnapArea.action.postSnap(windowElement: windowElement, windowId: windowId, screen: currentSnapArea.screen)
                 self.currentSnapArea = nil
@@ -401,10 +416,10 @@ class SnappingManager {
                    let windowId = windowId,
                    currentRect.size == initialWindowRect?.size,
                    currentRect.origin != initialWindowRect?.origin {
-  
+
                     unsnapRestore(windowId: windowId, currentRect: currentRect, cursorLoc: event.cgEvent?.location)
-                    
-                    if let snapArea = snapAreaContainingCursor(priorSnapArea: currentSnapArea)  {
+
+                    if edgeSnapEnabled, let snapArea = snapAreaContainingCursor(priorSnapArea: currentSnapArea)  {
                         box?.orderOut(nil)
                         if canSnap(event) {
                             snapArea.action.postSnap(windowElement: windowElement, windowId: windowId, screen: snapArea.screen)
@@ -472,6 +487,18 @@ class SnappingManager {
                     return
                 }
                 clearGridPreview()
+
+                // Classic edge snap is governed by `windowSnapping`; the Shift grid
+                // above is not. When edge snap is off (e.g. the user picked "Disable in
+                // Lilypad" for the macOS-tiling conflict, or unchecked "Snap windows by
+                // dragging"), a plain drag just moves the window freely.
+                guard !Defaults.windowSnapping.userDisabled else {
+                    if currentSnapArea != nil {
+                        box?.orderOut(nil)
+                        currentSnapArea = nil
+                    }
+                    return
+                }
 
                 if let snapArea = snapAreaContainingCursor(priorSnapArea: currentSnapArea) {
                     if snapArea == currentSnapArea {
