@@ -111,12 +111,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if intLastVersion < 64 {
                 SnapAreaModel.instance.migrate()
             }
-            if intLastVersion < 102 {
-                // Lilypad: seed sensible starter grid layouts for every display
-                // we currently know about. Idempotent — only displays without
-                // existing layouts are seeded; no semantic snap-area→grid migration.
-                GridModel.instance.seedDefaultLayouts(forDisplays: DisplayRegistry.instance.knownDisplayUUIDs())
-            }
+            // Lilypad: no launch-time grid seeding. Persisting a starter layout for
+            // every known display on launch was an extra write to the shared
+            // per-display layouts dict, and that write surface is what exposed it to
+            // the stale-cache clobber (relaunch data loss). Displays with no stored
+            // layout now use `GridModel.computedDefaultLayout()` at runtime (mirroring
+            // SnapAreaModel's computed defaults); only layouts the user explicitly
+            // creates in the Layouts pane are persisted.
         } else {
             Defaults.installVersion.value = currentVersion
             Defaults.allowAnyShortcut.enabled = true

@@ -181,16 +181,20 @@ class GridModelTests: XCTestCase {
         XCTAssertEqual(model.layouts(forDisplay: uuidB).layouts.count, 1)
     }
 
-    func testEnsureActiveLayoutSeedsWhenEmptyThenReturnsExisting() {
-        // First call on an unseeded display lazily seeds it and returns the active layout.
-        let first = model.ensureActiveLayout(forDisplay: uuidA)
-        XCTAssertNotNil(first)
-        XCTAssertEqual(model.layouts(forDisplay: uuidA).layouts.count, 1)
-        XCTAssertEqual(model.layouts(forDisplay: uuidA).activeLayoutId, first?.id)
+    func testEnsureActiveLayoutComputesDefaultWithoutPersisting() {
+        // An unconfigured display returns a usable COMPUTED default (2×2) but stores
+        // NOTHING — persisting on the runtime path is what exposed the layouts dict to
+        // the stale-cache clobber, so the grid now falls back to a computed default
+        // and only persists layouts the user explicitly creates.
+        let computed = model.ensureActiveLayout(forDisplay: uuidA)
+        XCTAssertNotNil(computed)
+        XCTAssertEqual(computed?.cols, 2)
+        XCTAssertEqual(computed?.rows, 2)
+        XCTAssertTrue(model.layouts(forDisplay: uuidA).layouts.isEmpty, "ensureActiveLayout must not persist a seed")
 
-        // Second call returns the same active layout without re-seeding (no duplicate layouts).
-        let second = model.ensureActiveLayout(forDisplay: uuidA)
-        XCTAssertEqual(second?.id, first?.id)
-        XCTAssertEqual(model.layouts(forDisplay: uuidA).layouts.count, 1)
+        // When the display HAS a stored layout, that one is returned (not the default).
+        let stored = layout("stored", "Stored")
+        model.addLayout(stored, forDisplay: uuidA)
+        XCTAssertEqual(model.ensureActiveLayout(forDisplay: uuidA)?.id, "stored")
     }
 }

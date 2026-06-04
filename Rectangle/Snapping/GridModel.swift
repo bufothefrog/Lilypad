@@ -33,19 +33,69 @@ class GridModel {
         layouts(forDisplay: displayUUID).activeLayout
     }
 
-    /// The active layout for `displayUUID`, seeding the display with the default
-    /// starter set on first use if it has no layouts yet. This is the on-demand
-    /// seeding the runtime grid path relies on: the one-shot launch migration can
-    /// miss displays that aren't named/connected yet at launch (and never re-runs
-    /// once lastVersion advances), so the drag/chord/keyboard paths seed lazily
-    /// instead. Seeds at most once per display (subsequent calls return the active
-    /// layout directly, so there is no per-frame write).
+    /// The active layout for `displayUUID`, or a COMPUTED default when the display
+    /// has none yet. Mirrors `SnapAreaModel`'s computed-default model: the runtime
+    /// grid path (drag / chord / keyboard) gets a usable layout WITHOUT writing
+    /// anything to storage. This is deliberate — the previous version persisted a
+    /// seed on first use, and that per-display write is exactly what exposed the
+    /// shared layouts dict to the stale-cache clobber that wiped other displays. A
+    /// display only gets a STORED layout once the user explicitly creates one in the
+    /// Layouts pane; until then the grid just uses `computedDefaultLayout`.
     func ensureActiveLayout(forDisplay displayUUID: String) -> ZoneLayout? {
         if let layout = activeLayout(forDisplay: displayUUID) {
             return layout
         }
-        seedDefaultLayouts(forDisplays: [displayUUID])
-        return activeLayout(forDisplay: displayUUID)
+        return GridModel.computedDefaultLayout()
+    }
+
+    /// The in-memory default layout used when a display has no stored layouts. A
+    /// STABLE id (not a fresh UUID) so repeat / last-action detection on the runtime
+    /// commit paths stays consistent across frames and drags.
+    static func computedDefaultLayout() -> ZoneLayout {
+        ZoneLayout.grid2x2(id: "lilypad.default.2x2", name: "2 × 2")
+    }
+
+    // MARK: - Persistence helpers (fresh read / lenient decode)
+
+    private static let gridLayoutsKey = "gridLayoutsByDisplay"
+
+    /// The CURRENT on-disk layouts dict, read FRESH from `UserDefaults` rather than
+    /// `JSONDefault`'s load-once `typedValue` cache. Every mutation below uses this
+    /// as its copy-mutate-writeback base so a write can never clobber entries that
+    /// another process — or an earlier session this process's cache never saw —
+    /// wrote to disk (the relaunch data-loss bug).
+    ///
+    /// LENIENT: a strict whole-dict decode that fails (one schema-drifted entry)
+    /// used to nil the ENTIRE dict via `try?` and let the next write seed a 1-entry
+    /// dict, wiping everything. So on a strict-decode failure we fall back to
+    /// decoding each display entry independently and keep every one that still
+    /// decodes — a single bad entry costs only itself, never the whole set.
+    private func currentByDisplay() -> [String: PerDisplayLayouts] {
+        guard let json = UserDefaults.standard.string(forKey: Self.gridLayoutsKey),
+              let data = json.data(using: .utf8) else { return [:] }
+        if let dict = try? JSONDecoder().decode([String: PerDisplayLayouts].self, from: data) {
+            return dict
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        var result: [String: PerDisplayLayouts] = [:]
+        for (uuid, value) in object {
+            if let entryData = try? JSONSerialization.data(withJSONObject: value),
+               let decoded = try? JSONDecoder().decode(PerDisplayLayouts.self, from: entryData) {
+                result[uuid] = decoded
+            }
+        }
+        return result
+    }
+
+    /// Persist `byDisplay` to disk (authoritatively, via `UserDefaults`) and keep
+    /// the `JSONDefault` cache coherent so fast readers stay in sync.
+    private func writeByDisplay(_ byDisplay: [String: PerDisplayLayouts]) {
+        if let data = try? JSONEncoder().encode(byDisplay),
+           let json = String(data: data, encoding: .utf8) {
+            UserDefaults.standard.set(json, forKey: Self.gridLayoutsKey)
+        }
+        // Keep the JSONDefault load-once cache coherent for fast readers.
+        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
     }
 
     // MARK: - Mutations (copy-mutate-writeback)
@@ -53,7 +103,7 @@ class GridModel {
     /// Appends `layout` to `displayUUID`'s layouts. If the display had no
     /// layouts before, the new one becomes active.
     func addLayout(_ layout: ZoneLayout, forDisplay displayUUID: String) {
-        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        var byDisplay = currentByDisplay()
         var perDisplay = byDisplay[displayUUID] ?? PerDisplayLayouts()
         var newLayout = layout
         // Ids must be unique within a display — rename/remove/setActive all key on
@@ -67,25 +117,25 @@ class GridModel {
             perDisplay.activeLayoutId = newLayout.id
         }
         byDisplay[displayUUID] = perDisplay
-        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+        writeByDisplay(byDisplay)
     }
 
     /// Renames the layout with `id` on `displayUUID`. No-op if not found.
     func renameLayout(id: String, to newName: String, forDisplay displayUUID: String) {
-        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        var byDisplay = currentByDisplay()
         guard var perDisplay = byDisplay[displayUUID],
               let index = perDisplay.layouts.firstIndex(where: { $0.id == id })
         else { return }
         perDisplay.layouts[index].name = newName
         byDisplay[displayUUID] = perDisplay
-        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+        writeByDisplay(byDisplay)
     }
 
     /// Removes the layout with `id` from `displayUUID`. If the removed layout was
     /// active, `activeLayoutId` is repointed to the first remaining layout (or
     /// cleared when none remain).
     func removeLayout(id: String, forDisplay displayUUID: String) {
-        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        var byDisplay = currentByDisplay()
         guard var perDisplay = byDisplay[displayUUID],
               perDisplay.layouts.contains(where: { $0.id == id })
         else { return }
@@ -94,7 +144,7 @@ class GridModel {
             perDisplay.activeLayoutId = perDisplay.layouts.first?.id
         }
         byDisplay[displayUUID] = perDisplay
-        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+        writeByDisplay(byDisplay)
     }
 
     /// Overwrites the GEOMETRY (boundaries + cell->zone map) of the layout with
@@ -107,7 +157,7 @@ class GridModel {
                       rowBoundaries: [Double],
                       cellZones: [Int],
                       forDisplay displayUUID: String) {
-        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        var byDisplay = currentByDisplay()
         guard var perDisplay = byDisplay[displayUUID],
               let index = perDisplay.layouts.firstIndex(where: { $0.id == id })
         else { return }
@@ -117,7 +167,7 @@ class GridModel {
         perDisplay.layouts[index].rowBoundaries = rowBoundaries
         perDisplay.layouts[index].cellZones = cellZones
         byDisplay[displayUUID] = perDisplay
-        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+        writeByDisplay(byDisplay)
     }
 
     /// Convenience overload taking an already-built `ZoneLayout` (matched by its
@@ -133,13 +183,13 @@ class GridModel {
     /// Marks the layout with `id` as active on `displayUUID`. No-op if no layout
     /// with that id exists for the display.
     func setActiveLayout(id: String, forDisplay displayUUID: String) {
-        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        var byDisplay = currentByDisplay()
         guard var perDisplay = byDisplay[displayUUID],
               perDisplay.layouts.contains(where: { $0.id == id })
         else { return }
         perDisplay.activeLayoutId = id
         byDisplay[displayUUID] = perDisplay
-        Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+        writeByDisplay(byDisplay)
     }
 
     // MARK: - Seeding
@@ -153,7 +203,7 @@ class GridModel {
     /// from `DisplayRegistry`, so callers control which displays to seed.
     @discardableResult
     func seedDefaultLayouts(forDisplays displays: [String]) -> [String] {
-        var byDisplay = Defaults.gridLayoutsByDisplay.typedValue ?? [:]
+        var byDisplay = currentByDisplay()
         var seeded: [String] = []
         for uuid in displays {
             // An existing entry — even an empty one (e.g. the user removed a
@@ -164,7 +214,7 @@ class GridModel {
             seeded.append(uuid)
         }
         if !seeded.isEmpty {
-            Defaults.gridLayoutsByDisplay.typedValue = byDisplay
+            writeByDisplay(byDisplay)
         }
         return seeded
     }
