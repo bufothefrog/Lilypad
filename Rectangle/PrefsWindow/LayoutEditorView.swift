@@ -97,13 +97,11 @@ struct LayoutEditorView: View {
 
     // MARK: Resize state
 
-    /// The interior divider currently being dragged (for highlight), or nil.
+    /// The boundary currently being resized (a drag is in progress), or nil.
     @State private var activeDivider: DividerRef? = nil
-    /// The edge segment currently hovered (for the grab-cue highlight), or nil.
-    @State private var hoveredDivider: DividerRef? = nil
-    /// Whether the current divider drag has pushed a snapshot yet (so a drag pushes
-    /// exactly one undo entry, not one per frame).
-    @State private var dividerDragSnapshotted: Bool = false
+    /// The movable seam the cursor is near right now — drives the solid resize cue.
+    /// nil when the cursor is in a zone interior / off-canvas.
+    @State private var hoveredEdge: EdgeSegment? = nil
 
     // MARK: Undo / redo
 
@@ -242,10 +240,12 @@ struct LayoutEditorView: View {
             ForEach(working.zoneIds, id: \.self) { zoneId in
                 zoneView(zoneId: zoneId, local: local)
             }
-            // The snapping split guide (only while hovering a zone, no sweep/chip).
+            // The snapping split guide (only while hovering a zone interior — it is
+            // suppressed automatically near a seam, where hoverZone is cleared).
             splitGuide(local: local)
-            // Interior divider handles (drawn on top so they're draggable).
-            dividerHandles(local: local)
+            // The solid resize cue on the movable seam under (or being dragged by)
+            // the cursor. Non-interactive — the canvas gesture owns the drag.
+            edgeCue(local: local)
         }
         .background(Color(NSColor.controlBackgroundColor))
         .overlay(
@@ -262,6 +262,7 @@ struct LayoutEditorView: View {
             case .ended:
                 hoverPoint = nil
                 hoverZone = nil
+                hoveredEdge = nil
             }
         }
         // Press-drag: distinguishes a click-to-split from a drag-to-merge.
@@ -280,16 +281,17 @@ struct LayoutEditorView: View {
                            width: cocoaRect.width,
                            height: cocoaRect.height)
         let inSweep = sweepZones.contains(zoneId)
-        let isHovered = hoverZone == zoneId && sweepAnchorZone == nil && mergeCandidate == nil
         let number = (working.zoneIds.firstIndex(of: zoneId) ?? 0) + 1
         return ZStack {
             RoundedRectangle(cornerRadius: 3)
                 .fill(inSweep
                       ? Color.accentColor.opacity(0.22)
                       : Color(NSColor.unemphasizedSelectedContentBackgroundColor))
+            // Only a merge sweep accents a zone box; plain hover never does (the
+            // resize cue is the seam line, not a box outline).
             RoundedRectangle(cornerRadius: 3)
-                .stroke(inSweep || isHovered ? Color.accentColor : Color(NSColor.separatorColor),
-                        lineWidth: inSweep || isHovered ? 2 : 1)
+                .stroke(inSweep ? Color.accentColor : Color(NSColor.separatorColor),
+                        lineWidth: inSweep ? 2 : 1)
             VStack(spacing: 2) {
                 Text("\(number)")
                     .font(.system(size: 15, weight: .semibold))
@@ -345,7 +347,7 @@ struct LayoutEditorView: View {
             // A vertical cut line: snap the x fraction across the whole canvas, then
             // clamp the drawn line into the zone's vertical span.
             let raw = Double(point.x / local.width)
-            let snapped = ZoneLayout.snapFraction(raw)
+            let snapped = ZoneLayout.snapFraction(raw, candidates: splitSnapCandidates(zoneId: zoneId, axis: axis, local: local))
             let x = CGFloat(snapped) * local.width
             guard x > zoneRect.minX + 1, x < zoneRect.maxX - 1 else { return nil }
             return (CGPoint(x: x, y: zoneRect.minY), CGPoint(x: x, y: zoneRect.maxY))
@@ -353,11 +355,32 @@ struct LayoutEditorView: View {
             // A horizontal cut line: rowBoundaries are measured from the TOP and
             // SwiftUI y is top-down, so the fraction maps to y directly (no flip).
             let raw = Double(point.y / local.height)
-            let snapped = ZoneLayout.snapFraction(raw)
+            let snapped = ZoneLayout.snapFraction(raw, candidates: splitSnapCandidates(zoneId: zoneId, axis: axis, local: local))
             let y = CGFloat(snapped) * local.height
             guard y > zoneRect.minY + 1, y < zoneRect.maxY - 1 else { return nil }
             return (CGPoint(x: zoneRect.minX, y: y), CGPoint(x: zoneRect.maxX, y: y))
         }
+    }
+
+    /// Snap candidates for splitting `zoneId` on `axis`: the global gridline targets
+    /// PLUS the zone's OWN 50% (as a canvas-global fraction), so a cut snaps to the
+    /// middle of the zone being split even when that zone isn't centered on the
+    /// canvas. Works for both axes (vertical → x midpoint, horizontal → y midpoint).
+    private func splitSnapCandidates(zoneId: Int, axis: ZoneSplitAxis, local: CGRect) -> [Double] {
+        let cocoa = GridCalculation.zoneRect(layout: working, zoneId: zoneId, in: local)
+        guard !cocoa.isNull, local.width > 0, local.height > 0 else { return ZoneLayout.defaultSnapCandidates }
+        let mid: Double
+        switch axis {
+        case .vertical:
+            mid = Double((cocoa.minX + cocoa.maxX) / 2 / local.width)
+        case .horizontal:
+            // The zone's vertical centre in SwiftUI/top-down fraction (rowBoundaries
+            // are measured from the top, matching the split fraction point.y/height).
+            let top = local.height - cocoa.maxY
+            let bottom = local.height - cocoa.minY
+            mid = Double((top + bottom) / 2 / local.height)
+        }
+        return ZoneLayout.defaultSnapCandidates + [mid]
     }
 
     /// The split axis to use right now: Option held forces horizontal regardless of
@@ -367,21 +390,25 @@ struct LayoutEditorView: View {
         return splitAxis
     }
 
-    // MARK: - Divider handles (resize)
+    // MARK: - Resize seams
     //
-    // Handles lie on ACTUAL zone edges only — a run of an interior boundary where
-    // the cells on either side belong to DIFFERENT zones. A boundary stretch that
-    // merely passes THROUGH a merged zone (same zone both sides) draws nothing, so
-    // the only lines shown / grabbable are the real seams between zones (not the
-    // underlying cell grid, which used to make merged zones look split).
+    // Seams are ACTUAL zone edges only — a run of an interior boundary where the
+    // cells on either side belong to DIFFERENT zones. A boundary that merely passes
+    // THROUGH a merged zone (same zone both sides) is not a seam, so nothing is shown
+    // or grabbable there. The cue is a non-interactive SOLID accent line on the seam
+    // the cursor is near (hover) or dragging (active); the drag itself is owned by the
+    // canvas gesture via `nearestEdge`, so there is no separate hit target to miss.
 
     @ViewBuilder
-    private func dividerHandles(local: CGRect) -> some View {
-        ForEach(columnEdgeSegments, id: \.id) { seg in
-            edgeHandle(seg, local: local)
-        }
-        ForEach(rowEdgeSegments, id: \.id) { seg in
-            edgeHandle(seg, local: local)
+    private func edgeCue(local: CGRect) -> some View {
+        let cue: DividerRef? = activeDivider
+            ?? hoveredEdge.map { DividerRef(axis: $0.axis, index: $0.boundaryIndex) }
+        if let ref = cue {
+            let segments = (ref.axis == .column ? columnEdgeSegments : rowEdgeSegments)
+                .filter { $0.boundaryIndex == ref.index }
+            ForEach(segments, id: \.id) { seg in
+                edgeLine(seg, local: local)
+            }
         }
     }
 
@@ -444,51 +471,23 @@ struct LayoutEditorView: View {
         return segments
     }
 
-    /// A draggable resize handle on one edge segment. It highlights in the accent
-    /// color when hovered or actively dragged (the grab cue). Dragging moves the
-    /// whole boundary line — every zone bounded by it shifts together; a merged zone
-    /// the line only passes through is unaffected, since its outer edges don't move.
-    private func edgeHandle(_ seg: EdgeSegment, local: CGRect) -> some View {
-        let ref = DividerRef(axis: seg.axis, index: seg.boundaryIndex)
-        let highlight = activeDivider == ref || hoveredDivider == ref
+    /// One solid accent line over a seam segment — the resize cue. Non-interactive:
+    /// the canvas gesture drives the actual drag (see `canvasGesture` / `nearestEdge`).
+    private func edgeLine(_ seg: EdgeSegment, local: CGRect) -> some View {
         let isColumn = seg.axis == .column
         let alongSize = isColumn ? local.height : local.width
         let along0 = CGFloat(seg.startFraction) * alongSize
         let along1 = CGFloat(seg.endFraction) * alongSize
         let length = max(along1 - along0, 1)
-        let thickness: CGFloat = highlight ? 3 : 2
         let position = isColumn
             ? CGPoint(x: CGFloat(working.colBoundaries[seg.boundaryIndex]) * local.width, y: (along0 + along1) / 2)
             : CGPoint(x: (along0 + along1) / 2, y: CGFloat(working.rowBoundaries[seg.boundaryIndex]) * local.height)
 
         return Rectangle()
-            .fill(highlight ? Color.accentColor : Color(NSColor.separatorColor))
-            .frame(width: isColumn ? thickness : length, height: isColumn ? length : thickness)
-            .frame(width: isColumn ? 11 : length, height: isColumn ? length : 11)
-            .contentShape(Rectangle())
+            .fill(Color.accentColor)
+            .frame(width: isColumn ? 3 : length, height: isColumn ? length : 3)
             .position(position)
-            .onHover { inside in hoveredDivider = inside ? ref : (hoveredDivider == ref ? nil : hoveredDivider) }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if !dividerDragSnapshotted {
-                            pushUndoSnapshot()
-                            dividerDragSnapshotted = true
-                        }
-                        activeDivider = ref
-                        if isColumn {
-                            let snapped = ZoneLayout.snapFraction(Double(value.location.x / local.width))
-                            if let next = working.movingColumnBoundary(at: seg.boundaryIndex, to: snapped) { working = next }
-                        } else {
-                            let snapped = ZoneLayout.snapFraction(Double(value.location.y / local.height))
-                            if let next = working.movingRowBoundary(at: seg.boundaryIndex, to: snapped) { working = next }
-                        }
-                    }
-                    .onEnded { _ in
-                        activeDivider = nil
-                        dividerDragSnapshotted = false
-                    }
-            )
+            .allowsHitTesting(false)
     }
 
     // MARK: - Merge chip
@@ -552,7 +551,45 @@ struct LayoutEditorView: View {
         guard sweepAnchorZone == nil, activeDivider == nil else { return }
         guard local.width > 0, local.height > 0 else { return }
         hoverPoint = point
-        hoverZone = zoneAt(point: point, local: local)
+        // Seam takes precedence: near a movable edge we show the solid resize cue and
+        // suppress the split guide (hoverZone = nil). Otherwise the cursor is "inside"
+        // a zone and the dashed split guide applies.
+        if let edge = nearestEdge(to: point, local: local) {
+            hoveredEdge = edge
+            hoverZone = nil
+        } else {
+            hoveredEdge = nil
+            hoverZone = zoneAt(point: point, local: local)
+        }
+    }
+
+    /// How close (canvas points) the cursor must be to a movable seam to enter resize
+    /// mode. Generous so the seam is easy to grab without pixel-hunting.
+    private static let edgeProximity: CGFloat = 8
+
+    /// The movable seam segment nearest `point` within `edgeProximity`, or nil. Only
+    /// real seams (a boundary run separating two different zones) qualify — a boundary
+    /// that merely passes through a merged zone is not grabbable.
+    private func nearestEdge(to point: CGPoint, local: CGRect) -> EdgeSegment? {
+        var best: EdgeSegment? = nil
+        var bestDistance = Self.edgeProximity
+        for seg in columnEdgeSegments {
+            let x = CGFloat(working.colBoundaries[seg.boundaryIndex]) * local.width
+            let y0 = CGFloat(seg.startFraction) * local.height
+            let y1 = CGFloat(seg.endFraction) * local.height
+            guard point.y >= y0 - Self.edgeProximity, point.y <= y1 + Self.edgeProximity else { continue }
+            let distance = abs(point.x - x)
+            if distance < bestDistance { bestDistance = distance; best = seg }
+        }
+        for seg in rowEdgeSegments {
+            let y = CGFloat(working.rowBoundaries[seg.boundaryIndex]) * local.height
+            let x0 = CGFloat(seg.startFraction) * local.width
+            let x1 = CGFloat(seg.endFraction) * local.width
+            guard point.x >= x0 - Self.edgeProximity, point.x <= x1 + Self.edgeProximity else { continue }
+            let distance = abs(point.y - y)
+            if distance < bestDistance { bestDistance = distance; best = seg }
+        }
+        return best
     }
 
     /// The zone under a SwiftUI top-left canvas-local point, via the runtime
@@ -567,8 +604,6 @@ struct LayoutEditorView: View {
     private func canvasGesture(local: CGRect) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                // A live divider drag owns the gesture stream; bail.
-                guard activeDivider == nil else { return }
                 if pressStart == nil {
                     pressStart = value.startLocation
                     // If the press began on the Merge chip, stay out of the way so
@@ -580,14 +615,32 @@ struct LayoutEditorView: View {
                         pressOnChip = true
                         return
                     }
-                    // A press elsewhere starts a fresh sweep and clears a stale chip.
-                    sweepAnchorZone = zoneAt(point: value.startLocation, local: local)
-                    sweepCurrentZone = sweepAnchorZone
-                    gestureIsDrag = false
-                    mergeCandidate = nil
+                    // RESIZE: a press that began near a movable seam grabs that
+                    // boundary and drags it (one undo snapshot for the whole drag).
+                    if let edge = nearestEdge(to: value.startLocation, local: local) {
+                        activeDivider = DividerRef(axis: edge.axis, index: edge.boundaryIndex)
+                        pushUndoSnapshot()
+                    } else {
+                        // Otherwise it's a split (click) or merge (drag-across) sweep.
+                        sweepAnchorZone = zoneAt(point: value.startLocation, local: local)
+                        sweepCurrentZone = sweepAnchorZone
+                        gestureIsDrag = false
+                        mergeCandidate = nil
+                    }
                 }
-                // While the press owns the chip, ignore movement entirely.
                 guard !pressOnChip else { return }
+                // RESIZE mode: move the grabbed boundary to the cursor.
+                if let divider = activeDivider {
+                    if divider.axis == .column {
+                        let snapped = ZoneLayout.snapFraction(Double(value.location.x / local.width))
+                        if let next = working.movingColumnBoundary(at: divider.index, to: snapped) { working = next }
+                    } else {
+                        let snapped = ZoneLayout.snapFraction(Double(value.location.y / local.height))
+                        if let next = working.movingRowBoundary(at: divider.index, to: snapped) { working = next }
+                    }
+                    return
+                }
+                // SPLIT / MERGE sweep promotion.
                 let dx = value.location.x - value.startLocation.x
                 let dy = value.location.y - value.startLocation.y
                 let movedZone = zoneAt(point: value.location, local: local)
@@ -600,7 +653,8 @@ struct LayoutEditorView: View {
             }
             .onEnded { value in
                 defer { resetGestureTransients() }
-                guard activeDivider == nil else { return }
+                // A resize drag just finished — nothing to commit.
+                if activeDivider != nil { return }
                 // The press was on the chip — let the Button's action handle it; do
                 // not commit a split or sweep here.
                 if pressOnChip { return }
@@ -618,6 +672,7 @@ struct LayoutEditorView: View {
         sweepCurrentZone = nil
         gestureIsDrag = false
         pressOnChip = false
+        activeDivider = nil
     }
 
     /// The zones currently covered by the active sweep (bounding cell-range of the
@@ -634,10 +689,11 @@ struct LayoutEditorView: View {
         clearFeedback()
         guard let zoneId = zoneAt(point: point, local: local) else { return }
         let axis = effectiveSplitAxis
+        let candidates = splitSnapCandidates(zoneId: zoneId, axis: axis, local: local)
         let fraction: Double
         switch axis {
-        case .vertical:   fraction = ZoneLayout.snapFraction(Double(point.x / local.width))
-        case .horizontal: fraction = ZoneLayout.snapFraction(Double(point.y / local.height))
+        case .vertical:   fraction = ZoneLayout.snapFraction(Double(point.x / local.width), candidates: candidates)
+        case .horizontal: fraction = ZoneLayout.snapFraction(Double(point.y / local.height), candidates: candidates)
         }
         guard let next = working.splittingZone(zoneId, axis: axis, at: fraction) else {
             // Degenerate / out-of-zone cut — no-op (no nag, the guide already hid).
