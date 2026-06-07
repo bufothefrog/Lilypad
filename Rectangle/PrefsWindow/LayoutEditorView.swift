@@ -117,9 +117,13 @@ struct LayoutEditorView: View {
     @State private var feedback: String = ""
     @State private var feedbackIsError: Bool = false
 
-    /// The selected monitor's pixel size (point size × backing scale), resolved
-    /// once at init from the connected `NSScreen` if available.
+    /// The selected monitor's USABLE pixel size: the adjusted-visible-frame size
+    /// (menu bar / Dock / notch / screenEdgeGap removed — the area the runtime lays
+    /// zones out within) × backing scale. Resolved once at init.
     private let pixelSize: CGSize
+    /// The monitor's backing scale factor (1 for the disconnected fallback), used to
+    /// convert the runtime's point-space gap into the readout's pixel space.
+    private let displayScale: CGFloat
     /// Whether `pixelSize` is true device pixels (connected) or just points
     /// (disconnected fallback), so the label can say "px" vs "pt".
     private let isPixelResolution: Bool
@@ -138,6 +142,7 @@ struct LayoutEditorView: View {
 
         let resolved = LayoutEditorView.resolveResolution(forDisplay: displayUUID)
         self.pixelSize = resolved.size
+        self.displayScale = resolved.scale
         self.isPixelResolution = resolved.isPixels
     }
 
@@ -296,7 +301,7 @@ struct LayoutEditorView: View {
                 Text("\(number)")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(inSweep ? Color.accentColor : Color(NSColor.tertiaryLabelColor))
-                Text(pixelReadout(for: cocoaRect, canvas: local))
+                Text(pixelReadout(for: cocoaRect, zoneId: zoneId, canvas: local))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(inSweep ? Color.accentColor : Color(NSColor.secondaryLabelColor))
             }
@@ -308,12 +313,27 @@ struct LayoutEditorView: View {
         .allowsHitTesting(false)
     }
 
-    /// The live pixel/point readout for a zone: its fractional size × the
-    /// monitor's resolution, recomputed every render so it updates during drags.
-    private func pixelReadout(for cocoaRect: CGRect, canvas: CGRect) -> String {
+    /// The live pixel/point readout for a zone: the size of the window that will
+    /// actually be snapped to it. The zone's fraction of the USABLE area × the
+    /// monitor's resolution, MINUS the same shared-edge gap the runtime applies on
+    /// commit (full gap on screen-edge sides, half on sides shared with a neighbour),
+    /// so the number matches the placed window. Recomputed every render.
+    private func pixelReadout(for cocoaRect: CGRect, zoneId: Int, canvas: CGRect) -> String {
         guard canvas.width > 0, canvas.height > 0 else { return "" }
-        let w = cocoaRect.width / canvas.width * pixelSize.width
-        let h = cocoaRect.height / canvas.height * pixelSize.height
+        // Zone size in the monitor's POINTS (pixelSize is the usable area in px).
+        let unitWidth = pixelSize.width / displayScale
+        let unitHeight = pixelSize.height / displayScale
+        var widthPts = cocoaRect.width / canvas.width * unitWidth
+        var heightPts = cocoaRect.height / canvas.height * unitHeight
+        let gap = CGFloat(Defaults.gapSize.value)
+        if gap > 0 {
+            let edges = GridCalculation.sharedEdges(ofZone: zoneId, layout: working)
+            let half = gap / 2
+            widthPts = max(widthPts - (edges.contains(.left) ? half : gap) - (edges.contains(.right) ? half : gap), 0)
+            heightPts = max(heightPts - (edges.contains(.top) ? half : gap) - (edges.contains(.bottom) ? half : gap), 0)
+        }
+        let w = widthPts * displayScale
+        let h = heightPts * displayScale
         return "\(Int(w.rounded()))×\(Int(h.rounded()))"
     }
 
@@ -866,16 +886,17 @@ struct LayoutEditorView: View {
         return CGRect(x: x, y: y, width: drawW, height: drawH)
     }
 
-    /// Resolve a display UUID to its resolution. Connected displays report true
-    /// device pixels (`frame.size` × `backingScaleFactor`); a disconnected display
-    /// we can't query falls back to a 1920×1080 point canvas (scale 1) so the
-    /// editor still renders a sensible aspect ratio.
-    static func resolveResolution(forDisplay uuid: String) -> (size: CGSize, isPixels: Bool) {
+    /// Resolve a display UUID to its USABLE resolution. Connected displays report the
+    /// adjusted-visible-frame size (the runtime's layout area — menu bar / Dock /
+    /// notch / screenEdgeGap removed) × `backingScaleFactor`, plus the scale; a
+    /// disconnected display we can't query falls back to a 1920×1080 point canvas
+    /// (scale 1) so the editor still renders a sensible aspect ratio.
+    static func resolveResolution(forDisplay uuid: String) -> (size: CGSize, scale: CGFloat, isPixels: Bool) {
         for screen in NSScreen.screens where screen.displayUUIDString == uuid {
             let scale = screen.backingScaleFactor
-            let pts = screen.frame.size
-            return (CGSize(width: pts.width * scale, height: pts.height * scale), true)
+            let pts = screen.adjustedVisibleFrame().size
+            return (CGSize(width: pts.width * scale, height: pts.height * scale), scale, true)
         }
-        return (CGSize(width: 1920, height: 1080), false)
+        return (CGSize(width: 1920, height: 1080), 1, false)
     }
 }

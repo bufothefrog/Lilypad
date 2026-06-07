@@ -89,7 +89,9 @@ class SnapAreaViewController: NSViewController {
         guard let directional = Directional(rawValue: sender.tag) else { return }
         let selectedTag = sender.selectedTag()
         var snapAreaConfig: SnapAreaConfig?
-        if selectedTag > -1, let action = WindowAction(rawValue: selectedTag) {
+        if selectedTag < -1, let compound = CompoundSnapArea(rawValue: selectedTag) {
+           snapAreaConfig = SnapAreaConfig(compound: compound)
+        } else if selectedTag > -1, let action = WindowAction(rawValue: selectedTag) {
             snapAreaConfig = SnapAreaConfig(action: action)
         }
         SnapAreaModel.instance.setConfig(type: type, directional: directional, snapAreaConfig: snapAreaConfig, displayUUID: selectedDisplayUUID)
@@ -168,8 +170,19 @@ class SnapAreaViewController: NSViewController {
         select.addItem(withTitle: "-")
         select.menu?.items.first?.tag = -1
 
-        let selectedTag = snapAreaConfig?.action?.rawValue ?? -1
+        let selectedTag = snapAreaConfig?.action?.rawValue ?? snapAreaConfig?.compound?.rawValue ?? -1
 
+        for compoundSnapArea in CompoundSnapArea.all {
+            guard compoundSnapArea.compatibleOrientation.contains(orientation), compoundSnapArea.compatibleDirectionals.contains(directional) else { continue }
+
+            let item = NSMenuItem(title: compoundSnapArea.displayName, action: nil, keyEquivalent: "")
+            item.tag = compoundSnapArea.rawValue
+            select.menu?.addItem(item)
+            if selectedTag == item.tag {
+                select.select(item)
+            }
+        }
+        select.menu?.addItem(NSMenuItem.separator())
         for windowAction in WindowAction.active {
             if windowAction.isDragSnappable,
                 let name = windowAction.displayName {

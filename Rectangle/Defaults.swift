@@ -78,6 +78,7 @@ class Defaults {
     static let cornerSnapAreaSize = FloatDefault(key: "cornerSnapAreaSize", defaultValue: 20)
     static let shortEdgeSnapAreaSize = FloatDefault(key: "shortEdgeSnapAreaSize", defaultValue: 145)
     static let cascadeAllDeltaSize = FloatDefault(key: "cascadeAllDeltaSize", defaultValue: 30)
+    static let sixthsSnapArea = OptionalBoolDefault(key: "sixthsSnapArea")
     static let stageSize = FloatDefault(key: "stageSize", defaultValue: 190)
     static let dragFromStage = OptionalBoolDefault(key: "dragFromStage")
     static let alwaysAccountForStage = OptionalBoolDefault(key: "alwaysAccountForStage")
@@ -211,6 +212,7 @@ class Defaults {
         cornerSnapAreaSize,
         shortEdgeSnapAreaSize,
         cascadeAllDeltaSize,
+        sixthsSnapArea,
         stageSize,
         dragFromStage,
         alwaysAccountForStage,
@@ -231,7 +233,7 @@ class Defaults {
         systemWideMouseDown,
         systemWideMouseDownApps,
         screensOrderedByX,
-        showAdditionalSizesInMenu,
+        todoSidebarWidthUnit,
         gridLayoutsByDisplay,
         gridActivationModifier,
         gridSpanModifier,

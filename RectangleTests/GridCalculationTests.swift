@@ -833,6 +833,80 @@ class GridCalculationTests: XCTestCase {
         assertRect(GridCalculation.zoneRectWithGaps(layout: layout, zoneId: 0, in: area, gapSize: 0), plain)
     }
 
+    // MARK: - Shared-edge gap accounting (standardized on the classic edge-snap model)
+
+    /// `sharedEdges` must classify each edge by whether a neighbour exists, honoring
+    /// the Cocoa `.top`(high-y)/`.bottom`(low-y) convention against row 0 = TOP. This
+    /// is the anti-mirroring gate for the gap accounting.
+    func testSharedEdgesConvention() {
+        let layout = ZoneLayout.uniform(cols: 3, rows: 3, id: "u", name: "u")
+        // 3x3 identity zones: row 0 (top) 0 1 2 ; row 1 (mid) 3 4 5 ; row 2 (bottom) 6 7 8.
+        // Center zone 4 touches no screen edge => all four edges shared.
+        XCTAssertEqual(GridCalculation.sharedEdges(ofZone: 4, layout: layout), Edge.all)
+        // Top-left zone 0: left + top are screen edges => only right + bottom shared.
+        XCTAssertEqual(GridCalculation.sharedEdges(ofZone: 0, layout: layout), [.right, .bottom])
+        // Bottom-right zone 8: right + bottom are screen edges => only left + top shared.
+        XCTAssertEqual(GridCalculation.sharedEdges(ofZone: 8, layout: layout), [.left, .top])
+        // Top-center zone 1: only the top is a screen edge => left + right + bottom shared.
+        XCTAssertEqual(GridCalculation.sharedEdges(ofZone: 1, layout: layout), [.left, .right, .bottom])
+    }
+
+    /// A zone touching the screen boundary takes a FULL gap on those edges and a HALF
+    /// gap on edges shared with a neighbour — the classic edge-snap accounting.
+    func testZoneRectWithGapsUsesSharedEdges() {
+        let layout = uniform2x2()
+        let half: CGFloat = 5, full: CGFloat = 10
+        // Zone 0 = top-left: LEFT + TOP on the screen edge (full), RIGHT + BOTTOM shared (half).
+        let p0 = GridCalculation.zoneRect(layout: layout, zoneId: 0, in: area)
+        let g0 = GridCalculation.zoneRectWithGaps(layout: layout, zoneId: 0, in: area, gapSize: 10)
+        XCTAssertEqual(g0.minX, p0.minX + full, accuracy: eps, "left screen edge = full gap")
+        XCTAssertEqual(g0.maxY, p0.maxY - full, accuracy: eps, "top screen edge = full gap")
+        XCTAssertEqual(g0.maxX, p0.maxX - half, accuracy: eps, "right shared edge = half gap")
+        XCTAssertEqual(g0.minY, p0.minY + half, accuracy: eps, "bottom shared edge = half gap")
+        // Zone 3 = bottom-right: the mirror — LEFT + TOP shared (half), RIGHT + BOTTOM screen (full).
+        let p3 = GridCalculation.zoneRect(layout: layout, zoneId: 3, in: area)
+        let g3 = GridCalculation.zoneRectWithGaps(layout: layout, zoneId: 3, in: area, gapSize: 10)
+        XCTAssertEqual(g3.minX, p3.minX + half, accuracy: eps, "left shared edge = half gap")
+        XCTAssertEqual(g3.maxY, p3.maxY - half, accuracy: eps, "top shared edge = half gap")
+        XCTAssertEqual(g3.maxX, p3.maxX - full, accuracy: eps, "right screen edge = full gap")
+        XCTAssertEqual(g3.minY, p3.minY + full, accuracy: eps, "bottom screen edge = full gap")
+    }
+
+    /// The point of the change: two adjacent zones leave exactly ONE `gapSize`
+    /// between their windows (half from each), matching the gap at the screen edge —
+    /// not the doubled gap the old `.none`-everywhere inset produced.
+    func testAdjacentZonesLeaveSingleGapBetweenThem() {
+        let layout = uniform2x2()
+        let gap: Float = 10
+        let z0 = GridCalculation.zoneRectWithGaps(layout: layout, zoneId: 0, in: area, gapSize: gap) // top-left
+        let z1 = GridCalculation.zoneRectWithGaps(layout: layout, zoneId: 1, in: area, gapSize: gap) // top-right
+        let z2 = GridCalculation.zoneRectWithGaps(layout: layout, zoneId: 2, in: area, gapSize: gap) // bottom-left
+        // Horizontal gap between the top two zones == gapSize.
+        XCTAssertEqual(z1.minX - z0.maxX, CGFloat(gap), accuracy: eps)
+        // Vertical gap between the left two zones == gapSize (z0 is above z2).
+        XCTAssertEqual(z2.maxY - z0.minY, -CGFloat(gap), accuracy: eps, "z0 bottom sits gapSize above z2 top")
+        XCTAssertEqual(z0.minY - z2.maxY, CGFloat(gap), accuracy: eps)
+        // And each leaves a full gapSize at the screen edge it touches.
+        XCTAssertEqual(z0.minX - area.minX, CGFloat(gap), accuracy: eps)
+    }
+
+    /// A drag-span / proximity box gaps using the shared edges of its bounding cell
+    /// range, and `selectionRectWithGaps` agrees with `boundingRectWithGaps`.
+    func testSpanWithGapsUsesSharedEdgesOfBoundingRange() {
+        let layout = uniform2x2()
+        let half: CGFloat = 5, full: CGFloat = 10
+        // Top-row span [0,1]: left/right/top reach the screen (full), bottom shared (half).
+        let plain = GridCalculation.boundingRect(ofZones: [0, 1], in: area, layout: layout)
+        let gapped = GridCalculation.boundingRectWithGaps(ofZones: [0, 1], in: area, layout: layout, gapSize: 10)
+        XCTAssertEqual(gapped.minX, plain.minX + full, accuracy: eps, "left screen edge = full")
+        XCTAssertEqual(gapped.maxX, plain.maxX - full, accuracy: eps, "right screen edge = full")
+        XCTAssertEqual(gapped.maxY, plain.maxY - full, accuracy: eps, "top screen edge = full")
+        XCTAssertEqual(gapped.minY, plain.minY + half, accuracy: eps, "bottom shared = half")
+        // selectionRectWithGaps over the same endpoints equals the bounding version.
+        let sel = GridCalculation.selectionRectWithGaps(layout: layout, fromZone: 0, toZone: 1, in: area, gapSize: 10)
+        assertRect(sel, gapped)
+    }
+
     // MARK: - Quick-starter generators
 
     func testUniformGeneratorShape() {

@@ -67,6 +67,17 @@ class GridOverlayWindow: NSWindow {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
+    /// The fade duration, tied to the same animation-speed knob the footprint slide
+    /// uses (`footprintAnimationDurationMultiplier`). The multiplier's 0 default keeps
+    /// the default snappy fade (the overlay still fades when `footprintFade` is on,
+    /// mirroring the footprint's alpha — which fades regardless of the multiplier);
+    /// raising it lengthens the overlay fade proportionally, so one setting slows both
+    /// previews together.
+    private var fadeDuration: TimeInterval {
+        let multiplier = Double(Defaults.footprintAnimationDurationMultiplier.value)
+        return 0.12 * (multiplier > 0 ? multiplier : 1)
+    }
+
     // MARK: - Public surface
 
     /// Show `layout`'s zones on `screen`, filling every zone in `highlightZones`.
@@ -92,15 +103,22 @@ class GridOverlayWindow: NSWindow {
         let screenFrame = screen.frame
         let visibleFrame = screen.adjustedVisibleFrame()
 
+        // Reflect the REAL configured gap so the preview is WYSIWYG: each tile is
+        // inset by the same shared-edge gap the commit applies (the overlay is 1:1
+        // with the screen, so screen points == view-local units). When gaps are off
+        // the frames are edge-to-edge and the view falls back to a small cosmetic
+        // separation so zones still read as distinct.
+        let gapSize = Defaults.gapSize.value
         let frames = GridOverlayWindow.overlayZoneFrames(
             layout: layout,
             screenFrame: screenFrame,
-            visibleFrame: visibleFrame
+            visibleFrame: visibleFrame,
+            gapSize: gapSize
         )
 
         setFrame(screenFrame, display: false)
         gridView.frame = NSRect(origin: .zero, size: screenFrame.size)
-        gridView.update(zoneFrames: frames, highlightZones: highlightZones)
+        gridView.update(zoneFrames: frames, highlightZones: highlightZones, drawCosmeticGap: gapSize <= 0)
 
         // Cancel any in-flight hide so its completion handler doesn't order us out.
         orderOutCanceled = true
@@ -118,7 +136,7 @@ class GridOverlayWindow: NSWindow {
 
         orderFront(nil)
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
+            context.duration = self.fadeDuration
             animator().alphaValue = targetAlpha
         }
     }
@@ -141,7 +159,7 @@ class GridOverlayWindow: NSWindow {
         }
 
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
+            context.duration = self.fadeDuration
             animator().alphaValue = 0
         } completionHandler: { [weak self] in
             guard let self = self else { return }
@@ -172,11 +190,16 @@ class GridOverlayWindow: NSWindow {
     ///   - visibleFrame: the screen's `adjustedVisibleFrame()` (Cocoa bottom-left)
     ///     — the area zones are laid out within.
     /// - Returns: `[zoneId: localRect]`. Zones with a null rect are skipped.
-    static func overlayZoneFrames(layout: ZoneLayout, screenFrame: CGRect, visibleFrame: CGRect) -> [Int: CGRect] {
+    /// `gapSize > 0` insets each zone by the same shared-edge gap the runtime commit
+    /// applies (`GridCalculation.zoneRectWithGaps`), so the preview is pixel-accurate.
+    /// `gapSize` defaults to 0 (ungapped geometry) for the M4 coordinate tests.
+    static func overlayZoneFrames(layout: ZoneLayout, screenFrame: CGRect, visibleFrame: CGRect, gapSize: Float = 0) -> [Int: CGRect] {
         var result: [Int: CGRect] = [:]
         let origin = screenFrame.origin
         for zoneId in layout.zoneIds {
-            let zoneRect = GridCalculation.zoneRect(layout: layout, zoneId: zoneId, in: visibleFrame)
+            let zoneRect = gapSize > 0
+                ? GridCalculation.zoneRectWithGaps(layout: layout, zoneId: zoneId, in: visibleFrame, gapSize: gapSize)
+                : GridCalculation.zoneRect(layout: layout, zoneId: zoneId, in: visibleFrame)
             guard !zoneRect.isNull else { continue }
             // Screen Cocoa coords -> overlay-view-local coords: subtract the
             // window/screen origin. No flip: the view is non-flipped, so y is
@@ -205,12 +228,17 @@ private class GridOverlayView: NSView {
 
     private var zoneFrames: [Int: CGRect] = [:]
     private var highlightZones: Set<Int> = []
+    /// When true (gaps disabled), inset each tile by a small cosmetic amount so
+    /// adjacent zones read as separate footprints. When false, the frames already
+    /// carry the real configured gap (WYSIWYG) and are painted as-is.
+    private var drawCosmeticGap: Bool = true
 
     override var isFlipped: Bool { false }
 
-    func update(zoneFrames: [Int: CGRect], highlightZones: Set<Int>) {
+    func update(zoneFrames: [Int: CGRect], highlightZones: Set<Int>, drawCosmeticGap: Bool = true) {
         self.zoneFrames = zoneFrames
         self.highlightZones = highlightZones
+        self.drawCosmeticGap = drawCosmeticGap
         needsDisplay = true
     }
 
@@ -226,14 +254,16 @@ private class GridOverlayView: NSView {
         let unselectedColor = Defaults.gridUnselectedZoneColor.typedValue?.nsColor ?? GridOverlayView.defaultUnselectedColor
         let borderWidth = CGFloat(Defaults.footprintBorderWidth.value)
         let radius = GridOverlayView.cornerRadius
-        // A small gap so adjacent zones read as separate rounded footprints rather
-        // than one continuous fill.
-        let gap = max(borderWidth, 4)
+        // The frames already carry the real configured gap (computed by the
+        // unit-tested overlayZoneFrames). Only when gaps are OFF do we inset a small
+        // cosmetic amount so adjacent zones read as separate footprints rather than
+        // one continuous fill.
+        let cosmeticInset = drawCosmeticGap ? max(borderWidth, 4) : 0
 
         // No geometry is computed here — rects come from the unit-tested
         // `overlayZoneFrames`; draw(_:) only paints.
         for (zoneId, rect) in zoneFrames {
-            let tile = rect.insetBy(dx: gap, dy: gap)
+            let tile = cosmeticInset > 0 ? rect.insetBy(dx: cosmeticInset, dy: cosmeticInset) : rect
             guard tile.width > 0, tile.height > 0 else { continue }
             let path = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
 
@@ -246,8 +276,13 @@ private class GridOverlayView: NSView {
         }
     }
 
-    /// Default selected-zone fill: the footprint dark grey (matches the drag preview).
-    static let defaultSelectedColor = NSColor.black
+    /// Default selected-zone fill: the user's footprint colour, so a themed drag
+    /// footprint carries to the grid preview (falls back to black, the footprint
+    /// default). An explicit `gridSelectedZoneColor` or `gridUseAccentForSelected`
+    /// still overrides this in `draw`.
+    static var defaultSelectedColor: NSColor {
+        Defaults.footprintColor.typedValue?.nsColor ?? NSColor.black
+    }
     /// Default unselected-zone fill: a lighter grey.
     static let defaultUnselectedColor = NSColor(white: 0.6, alpha: 1)
 

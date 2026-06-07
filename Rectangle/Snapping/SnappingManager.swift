@@ -551,14 +551,21 @@ class SnappingManager {
                   canSnap(event)
             else {
                 // A modifier change that takes us out of a snappable state should
-                // also clear any grid preview that was showing — regardless of
+                // also clear any preview that was showing — regardless of
                 // windowMoving. In particular, when this guard fails because
                 // canSnap(event) became false mid-drag (e.g. the user released a
                 // configured snapModifier, or the window joined a Stage Manager
                 // strip group), windowMoving is still true; clearing only on
-                // !windowMoving would strand the overlay on screen with a zone
-                // still armed for commit. clearGridPreview() is a safe no-op when
-                // nothing is showing.
+                // !windowMoving would strand a preview on screen with a snap still
+                // armed for commit. Mirror the .leftMouseDragged !canSnap branch and
+                // drop BOTH the classic edge footprint and the grid overlay, so the
+                // invariant "currentSnapArea is non-nil only while snappable" holds
+                // and mouseUp can't commit an un-gated edge snap. clearGridPreview()
+                // is a safe no-op when nothing is showing.
+                if currentSnapArea != nil {
+                    box?.orderOut(nil)
+                    currentSnapArea = nil
+                }
                 clearGridPreview()
                 return
             }
@@ -717,81 +724,53 @@ class SnappingManager {
         currentGridProximityZones = nil
     }
 
-    /// Commit a grid drag-snap: compute the zone rect (with gaps) in the screen's
-    /// adjusted visible frame and move/resize the window to it via the shared
-    /// window-mover + history path, so unsnap-restore keeps working.
+    /// Shared tail for every grid drag-snap commit (single / span / proximity): seed
+    /// the pre-snap restore rect (so `.restore` works) and move/resize the window to
+    /// `rect` via the shared WindowManager mover-chain + history path. The three
+    /// commit helpers below differ ONLY in how they compute `rect`. A null rect is a
+    /// no-op. `initialWindowRect` (captured at mouseDown) is the pre-snap frame — the
+    /// same value the dragged handler's `unsnapRestore` records; `applyGridRect`'s
+    /// restore overload seeds it only if nothing recorded it during the drag.
+    private func commitGridRect(_ rect: CGRect, screen: NSScreen,
+                                windowElement: AccessibilityElement, windowId: CGWindowID) {
+        guard !rect.isNull else { return }
+        WindowManager.instance?.applyGridRect(rect, screen: screen, windowElement: windowElement,
+                                              windowId: windowId, restoreRect: initialWindowRect)
+    }
+
+    /// Commit a grid drag-snap: snap to the single zone's gapped rect.
     private func commitGridSnap(zone: Int, screen: NSScreen, layout: ZoneLayout,
                                 windowElement: AccessibilityElement, windowId: CGWindowID) {
-        let ignoreTodo = TodoManager.isTodoWindow(windowId)
-        let area = screen.adjustedVisibleFrame(ignoreTodo)
-
+        let area = screen.adjustedVisibleFrame(TodoManager.isTodoWindow(windowId))
         let rect = Defaults.gapSize.value > 0
             ? GridCalculation.zoneRectWithGaps(layout: layout, zoneId: zone, in: area, gapSize: Defaults.gapSize.value)
             : GridCalculation.zoneRect(layout: layout, zoneId: zone, in: area)
-        guard !rect.isNull else { return }
-
-        // Record the pre-snap restore rect so `restore` can bring the window back,
-        // mirroring how the edge-snap drag records it during unsnapRestore. The
-        // dragged handler's unsnapRestore already manages restoreRects during the
-        // drag; only set it here if nothing recorded it yet.
-        if Defaults.unsnapRestore.enabled != false,
-           AppDelegate.windowHistory.restoreRects[windowId] == nil {
-            AppDelegate.windowHistory.restoreRects[windowId] = initialWindowRect
-        }
-
-        // Reuse WindowManager's mover-chain + history recording (fixed-size/cross
-        // display handled there) rather than hand-rolling setFrame.
-        WindowManager.instance?.applyGridRect(rect, screen: screen, windowElement: windowElement, windowId: windowId)
+        commitGridRect(rect, screen: screen, windowElement: windowElement, windowId: windowId)
     }
 
-    /// Commit a grid SPAN drag-snap (M6): the window snaps to the selection rect
-    /// spanning `fromZone`..`toZone`. Mirrors `commitGridSnap` exactly (gaps,
-    /// restore-rect bookkeeping, the shared WindowManager.applyGridRect path) but
-    /// uses `GridCalculation.selectionRect` for the rect instead of a single zone.
+    /// Commit a grid SPAN drag-snap (M6): snap to the gapped selection rect spanning
+    /// `fromZone`..`toZone`. The span's bounding cell range gets a FULL gap on the
+    /// sides that reach the screen boundary and a HALF gap on the sides shared with a
+    /// neighbouring zone (shared-edge accounting, matching the classic edge-snap
+    /// path), so span and single-zone snaps leave uniform gaps.
     private func commitGridSpanSnap(fromZone: Int, toZone: Int, screen: NSScreen, layout: ZoneLayout,
                                     windowElement: AccessibilityElement, windowId: CGWindowID) {
-        let ignoreTodo = TodoManager.isTodoWindow(windowId)
-        let area = screen.adjustedVisibleFrame(ignoreTodo)
-
-        var rect = GridCalculation.selectionRect(layout: layout, fromZone: fromZone, toZone: toZone, in: area)
-        guard !rect.isNull else { return }
-        // Apply gaps the same way the single-zone commit does (inset the whole
-        // span by gapSize on every side), keeping span and single-zone snaps
-        // visually consistent.
-        if Defaults.gapSize.value > 0 {
-            rect = GapCalculation.applyGaps(rect, dimension: .both, sharedEdges: .none, gapSize: Defaults.gapSize.value)
-            guard !rect.isNull else { return }
-        }
-
-        if Defaults.unsnapRestore.enabled != false,
-           AppDelegate.windowHistory.restoreRects[windowId] == nil {
-            AppDelegate.windowHistory.restoreRects[windowId] = initialWindowRect
-        }
-
-        WindowManager.instance?.applyGridRect(rect, screen: screen, windowElement: windowElement, windowId: windowId)
+        let area = screen.adjustedVisibleFrame(TodoManager.isTodoWindow(windowId))
+        let rect = Defaults.gapSize.value > 0
+            ? GridCalculation.selectionRectWithGaps(layout: layout, fromZone: fromZone, toZone: toZone, in: area, gapSize: Defaults.gapSize.value)
+            : GridCalculation.selectionRect(layout: layout, fromZone: fromZone, toZone: toZone, in: area)
+        commitGridRect(rect, screen: screen, windowElement: windowElement, windowId: windowId)
     }
 
-    /// Commit a proximity-span drag-snap (optional mode): the window snaps to the
-    /// bounding box of `zones` — the set of zones the cursor was within the radius
-    /// of at mouseUp. Mirrors `commitGridSpanSnap` (gaps, restore-rect bookkeeping,
-    /// the shared WindowManager.applyGridRect path) but uses
-    /// `GridCalculation.boundingRect(ofZones:)` for the rect.
+    /// Commit a proximity-span drag-snap (optional mode): snap to the gapped bounding
+    /// box of `zones` — the set the cursor was within the radius of at mouseUp.
     private func commitGridProximitySnap(zones: Set<Int>, screen: NSScreen, layout: ZoneLayout,
                                          windowElement: AccessibilityElement, windowId: CGWindowID) {
-        let ignoreTodo = TodoManager.isTodoWindow(windowId)
-        let area = screen.adjustedVisibleFrame(ignoreTodo)
-
+        let area = screen.adjustedVisibleFrame(TodoManager.isTodoWindow(windowId))
         let rect = Defaults.gapSize.value > 0
             ? GridCalculation.boundingRectWithGaps(ofZones: zones, in: area, layout: layout, gapSize: Defaults.gapSize.value)
             : GridCalculation.boundingRect(ofZones: zones, in: area, layout: layout)
-        guard !rect.isNull else { return }
-
-        if Defaults.unsnapRestore.enabled != false,
-           AppDelegate.windowHistory.restoreRects[windowId] == nil {
-            AppDelegate.windowHistory.restoreRects[windowId] = initialWindowRect
-        }
-
-        WindowManager.instance?.applyGridRect(rect, screen: screen, windowElement: windowElement, windowId: windowId)
+        commitGridRect(rect, screen: screen, windowElement: windowElement, windowId: windowId)
     }
 
     func unsnapRestore(windowId: CGWindowID, currentRect: CGRect, cursorLoc: CGPoint?) {
@@ -896,11 +875,14 @@ class SnappingManager {
             if let action = config?.action {
                 return SnapArea(screen: screen, directional: directional, action: action)
             }
+            if let compound = config?.compound {
+                return compound.calculation.snapArea(cursorLocation: loc, screen: screen, directional: directional, priorSnapArea: priorSnapArea)
+            }
         }
-        
+
         return nil
     }
-    
+
     func directionalLocationOfCursor(loc: NSPoint, screen: NSScreen) -> Directional? {
         let frame = screen.frame
         let cornerSize = Defaults.cornerSnapAreaSize.cgFloat

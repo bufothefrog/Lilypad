@@ -64,7 +64,24 @@ class WindowManager {
         let resultingRect = windowElement.frame
         recordAction(windowId: windowId, resultingRect: resultingRect, action: .specified, subAction: nil)
     }
-    
+
+    /// `applyGridRect` plus the shared restore-rect seed used by every grid commit
+    /// (drag single/span/proximity + keyboard move/span). `.restore` reads only
+    /// `restoreRects`, and `recordAction` writes only `lastRectangleActions` — so
+    /// without this seed a snap of a free/never-snapped window would leave `.restore`
+    /// a no-op. Seeds only when unsnap-restore is on and nothing recorded it yet (the
+    /// drag's own `unsnapRestore` may have already seeded it). `restoreRect` is the
+    /// pre-move frame in top-left AX space, the same value `execute` stores as
+    /// `currentWindowRect`; a nil `restoreRect` skips the seed.
+    func applyGridRect(_ cocoaRect: CGRect, screen: NSScreen, windowElement: AccessibilityElement, windowId: CGWindowID, restoreRect: CGRect?) {
+        if Defaults.unsnapRestore.enabled != false,
+           AppDelegate.windowHistory.restoreRects[windowId] == nil,
+           let restoreRect = restoreRect {
+            AppDelegate.windowHistory.restoreRects[windowId] = restoreRect
+        }
+        applyGridRect(cocoaRect, screen: screen, windowElement: windowElement, windowId: windowId)
+    }
+
     private func recordAction(windowId: CGWindowID, resultingRect: CGRect, action: WindowAction, subAction: SubWindowAction?) {
         let newCount: Int
         if let lastRectangleAction = AppDelegate.windowHistory.lastRectangleActions[windowId], lastRectangleAction.action == action {

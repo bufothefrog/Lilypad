@@ -266,13 +266,24 @@ enum GridCalculation {
     }
 
     /// `boundingRect(ofZones:)` with Rectangle's standard gap inset applied via
-    /// `GapCalculation`, matching `zoneRectWithGaps` / `rangeRectWithGaps`. Shared
-    /// edges are `.none` (the whole span is inset on every side); `gapSize` 0 is a
-    /// no-op.
+    /// `GapCalculation`, matching `zoneRectWithGaps` / `rangeRectWithGaps`. The
+    /// shared edges of the span's bounding cell range are computed (`sharedEdges`)
+    /// so an edge touching the screen boundary gets a FULL gap while an edge shared
+    /// with a neighbouring zone gets a HALF gap — the same accounting the classic
+    /// edge-snap path uses (see `sharedEdges` docs). `gapSize` 0 is a no-op.
     static func boundingRectWithGaps(ofZones zones: Set<Int>, in area: CGRect, layout: ZoneLayout, gapSize: Float) -> CGRect {
-        let rect = boundingRect(ofZones: zones, in: area, layout: layout)
-        guard !rect.isNull, gapSize > 0 else { return rect }
-        return GapCalculation.applyGaps(rect, dimension: .both, sharedEdges: .none, gapSize: gapSize)
+        gapped(boundingRect(ofZones: zones, in: area, layout: layout),
+               sharedEdges: sharedEdges(ofZones: zones, layout: layout), gapSize: gapSize)
+    }
+
+    /// `selectionRect(fromZone:toZone:)` with gaps applied using the shared edges of
+    /// the selection's bounding cell range, so a drag-span snap insets a FULL gap on
+    /// the sides that reach the screen boundary and a HALF gap on the sides shared
+    /// with a neighbouring zone — keeping span snaps uniform with single-zone snaps
+    /// and with the classic edge path. `gapSize` 0 is a no-op.
+    static func selectionRectWithGaps(layout: ZoneLayout, fromZone: Int, toZone: Int, in area: CGRect, gapSize: Float) -> CGRect {
+        gapped(selectionRect(layout: layout, fromZone: fromZone, toZone: toZone, in: area),
+               sharedEdges: sharedEdges(ofZones: [fromZone, toZone], layout: layout), gapSize: gapSize)
     }
 
     // MARK: - Neighbor graph
@@ -463,28 +474,95 @@ enum GridCalculation {
     }
 
     /// `rangeRect` with Rectangle's standard gap inset applied via `GapCalculation`,
-    /// matching `zoneRectWithGaps`. Shared edges are `.none` (the "no edges shared
-    /// with neighbors" case); exact per-edge gap accounting is deferred (see
-    /// LILYPAD_PLAN.md "Risk register").
+    /// matching `zoneRectWithGaps`. The range's shared edges are computed
+    /// (`sharedEdges`) so an edge on the screen boundary gets a FULL gap and an edge
+    /// shared with a neighbouring cell-line gets a HALF gap, matching the classic
+    /// edge-snap accounting. `gapSize` 0 is a no-op.
     static func rangeRectWithGaps(_ range: CellRange, in area: CGRect, layout: ZoneLayout, gapSize: Float) -> CGRect {
-        let rect = rangeRect(range, in: area, layout: layout)
-        guard !rect.isNull, gapSize > 0 else { return rect }
-        return GapCalculation.applyGaps(rect, dimension: .both, sharedEdges: .none, gapSize: gapSize)
+        gapped(rangeRect(range, in: area, layout: layout),
+               sharedEdges: sharedEdges(colMin: range.colMin, colMax: range.colMax, rowMin: range.rowMin, rowMax: range.rowMax, cols: layout.cols, rows: layout.rows),
+               gapSize: gapSize)
     }
 
     // MARK: - Gap-aware convenience
 
     /// `zoneRect` with Rectangle's standard gap inset applied via `GapCalculation`.
     ///
-    /// Convenience for callers that already apply gaps to single-window snaps. Shared
-    /// edges are left at `.none`, so this is the "no edges shared with neighbors" case —
-    /// callers needing exact per-edge gap accounting (matching `SnappingManager.getBoxRect`)
-    /// should compute `sharedEdges` themselves. Exact per-edge gap accounting is deferred;
-    /// see LILYPAD_PLAN.md "Risk register".
+    /// The zone's shared edges are computed (`sharedEdges`) so an edge touching the
+    /// screen boundary gets a FULL gap and an edge shared with a neighbouring zone a
+    /// HALF gap — the same per-edge accounting `SnappingManager.getBoxRect` uses for
+    /// the classic edge-snap path. Two adjacent zones therefore leave exactly one
+    /// `gapSize` between their windows, matching the gap at the screen edge.
     static func zoneRectWithGaps(layout: ZoneLayout, zoneId: Int, in area: CGRect, gapSize: Float) -> CGRect {
-        let rect = zoneRect(layout: layout, zoneId: zoneId, in: area)
+        gapped(zoneRect(layout: layout, zoneId: zoneId, in: area),
+               sharedEdges: sharedEdges(ofZone: zoneId, layout: layout), gapSize: gapSize)
+    }
+
+    // MARK: - Shared-edge computation (gap accounting)
+
+    /// The edges of a rectangular cell range that are SHARED with a neighbouring
+    /// zone (interior to the grid) rather than lying on the screen-`area` boundary.
+    ///
+    /// Because the grid tiles `area` edge-to-edge with no holes, every edge of a
+    /// rectangular region is either on the area boundary — no neighbour, so it takes
+    /// a FULL gap — or adjacent to another zone — a neighbour, so it takes a HALF gap
+    /// (the two windows together then leave one `gapSize` between them). This is the
+    /// grid analogue of `WindowAction.gapSharedEdge`, letting every grid path reuse
+    /// the classic edge-snap gap accounting via `GapCalculation.applyGaps`.
+    ///
+    /// EDGE / ROW CONVENTION (must match `GapCalculation` + `cellRect`): `Edge.top`
+    /// is the HIGH-y edge and `Edge.bottom` the LOW-y edge. Row 0 is the TOP of the
+    /// screen (largest y), so the range's topmost row is `rowMin` (its `.top` edge)
+    /// and its bottommost row is `rowMax` (its `.bottom` edge). A row existing ABOVE
+    /// `rowMin` (i.e. `rowMin > 0`) means the top edge is shared; a row BELOW
+    /// `rowMax` (`rowMax < rows - 1`) means the bottom edge is shared.
+    static func sharedEdges(colMin: Int, colMax: Int, rowMin: Int, rowMax: Int, cols: Int, rows: Int) -> Edge {
+        var edges: Edge = .none
+        if colMin > 0 { edges.insert(.left) }
+        if colMax < cols - 1 { edges.insert(.right) }
+        if rowMin > 0 { edges.insert(.top) }
+        if rowMax < rows - 1 { edges.insert(.bottom) }
+        return edges
+    }
+
+    /// The shared edges of a single zone, from its bounding cell range. A merged
+    /// zone uses the bounding box of all its cells (zones are rectangular), so the
+    /// result is correct for the rect `zoneRect` returns.
+    static func sharedEdges(ofZone zoneId: Int, layout: ZoneLayout) -> Edge {
+        let zoneCells = cells(of: zoneId, in: layout)
+        guard !zoneCells.isEmpty else { return .none }
+        let minCol = zoneCells.map { $0.col }.min()!
+        let maxCol = zoneCells.map { $0.col }.max()!
+        let minRow = zoneCells.map { $0.row }.min()!
+        let maxRow = zoneCells.map { $0.row }.max()!
+        return sharedEdges(colMin: minCol, colMax: maxCol, rowMin: minRow, rowMax: maxRow, cols: layout.cols, rows: layout.rows)
+    }
+
+    /// The shared edges of the bounding cell range of a SET of zones — the same
+    /// bounding box `boundingRect` / `selectionRect` produce for that set — so the
+    /// gap on each side of a committed span/proximity box is correct. An empty or
+    /// all-unknown set has no cells and shares no edges (`.none`).
+    static func sharedEdges(ofZones zones: Set<Int>, layout: ZoneLayout) -> Edge {
+        var cellsForBounds: [(col: Int, row: Int)] = []
+        for zoneId in zones {
+            cellsForBounds.append(contentsOf: cells(of: zoneId, in: layout))
+        }
+        guard !cellsForBounds.isEmpty else { return .none }
+        let minCol = cellsForBounds.map { $0.col }.min()!
+        let maxCol = cellsForBounds.map { $0.col }.max()!
+        let minRow = cellsForBounds.map { $0.row }.min()!
+        let maxRow = cellsForBounds.map { $0.row }.max()!
+        return sharedEdges(colMin: minCol, colMax: maxCol, rowMin: minRow, rowMax: maxRow, cols: layout.cols, rows: layout.rows)
+    }
+
+    /// Apply Rectangle's standard gap inset to a grid rect via `GapCalculation`, in
+    /// BOTH dimensions with the given `sharedEdges`. The single home for grid gap
+    /// application — `zoneRectWithGaps` / `rangeRectWithGaps` / `boundingRectWithGaps`
+    /// / `selectionRectWithGaps` all funnel through here. A null rect or `gapSize <= 0`
+    /// is returned unchanged.
+    static func gapped(_ rect: CGRect, sharedEdges: Edge, gapSize: Float) -> CGRect {
         guard !rect.isNull, gapSize > 0 else { return rect }
-        return GapCalculation.applyGaps(rect, dimension: .both, sharedEdges: .none, gapSize: gapSize)
+        return GapCalculation.applyGaps(rect, dimension: .both, sharedEdges: sharedEdges, gapSize: gapSize)
     }
 
     // MARK: - Internal helpers

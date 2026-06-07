@@ -13,6 +13,8 @@ The preferences window is purposefully slim, but there's a lot that can be modif
 - [Only allow drag-to-snap when modifier keys are pressed](#only-allow-drag-to-snap-when-modifier-keys-are-pressed)
 - [Almost Maximize](#almost-maximize)
 - [Add an extra centering command with custom size](#add-an-extra-centering-command-with-custom-size)
+- [Add extra "ninths" sizing commands](#add-extra-ninths-sizing-commands)
+- [Add extra "eighths" sizing commands](#add-extra-eighths-sizing-commands)
 - [Add additional "thirds" sizing commands](#add-additional-thirds-sizing-commands)
 - [Add doubling/halving window sizing commands](#add-doublinghalving-window-sizing-commands)
 - [Add additional tiling and cascading commands](#add-additional-tiling-and-cascading-commands)
@@ -28,6 +30,7 @@ The preferences window is purposefully slim, but there's a lot that can be modif
 - [Setting gaps at the screen edges](#setting-gaps-at-the-screen-edges)
 - [Ignore specific drag to snap areas](#ignore-specific-drag-to-snap-areas)
 - [Disabling gaps when maximizing](#disabling-gaps-when-maximizing)
+- [Enabling snap areas for sixths](#enabling-snap-areas-for-sixths)
 - [Move cursor with window](#move-cursor-with-window)
 - [Prevent a window that is quickly dragged above the menu bar from going into Mission Control](#prevent-a-window-that-is-quickly-dragged-above-the-menu-bar-from-going-into-mission-control)
 - [Change the behavior of double-click window title bar](#change-the-behavior-of-double-click-window-title-bar)
@@ -159,6 +162,49 @@ For example, the command for setting the shortcut to `ctrl option command C` wou
 defaults write com.knollsoft.Rectangle centerProminently -dict-add keyCode -float 8 modifierFlags -float 1835305
 ```
 
+
+## Add extra "ninths" sizing commands
+
+Commands for resizing to screen ninths are not available in the UI.
+
+The key codes are:
+
+* topLeftNinth
+* topCenterNinth
+* topRightNinth
+* middleLeftNinth
+* middleCenterNinth
+* middleRightNinth
+* bottomLeftNinth
+* bottomCenterNinth
+* bottomRightNinth
+
+For example, the command for setting the top left ninth shortcut to `ctrl opt shift 1` would be:
+
+```bash
+defaults write com.knollsoft.Rectangle topLeftNinth -dict-add keyCode -float 18 modifierFlags -float 917504
+```
+
+## Add extra "eighths" sizing commands
+
+Commands for resizing to screen eighths are not available in the UI. This divides the screen up into a 4x2 grid.
+
+The key codes are:
+
+* topLeftEighth
+* topCenterLeftEighth
+* topCenterRightEighth
+* topRightEighth
+* bottomLeftEighth
+* bottomCenterLeftEighth
+* bottomCenterRightEighth
+* bottomRightEighth
+
+For example, the command for setting the top left eighth shortcut to `ctrl opt shift 1` would be:
+
+```bash
+defaults write com.knollsoft.Rectangle topLeftEighth -dict-add keyCode -float 18 modifierFlags -float 917504
+```
 
 ## Add additional "thirds" sizing commands 
 
@@ -401,6 +447,16 @@ To disable the gaps for "Maximize Height", execute:
 ```bash
 defaults write com.knollsoft.Rectangle applyGapsToMaximizeHeight -int 2
 ```
+
+## Enabling snap areas for sixths
+
+To enable snap areas for sixths corners, execute: 
+
+```bash
+defaults write com.knollsoft.Rectangle sixthsSnapArea -bool true
+```
+
+Once enabled, you can drag a window to the corner, then move it along the edge towards the thirds area to snap to a sixth.
 
 ## Move cursor with window
 

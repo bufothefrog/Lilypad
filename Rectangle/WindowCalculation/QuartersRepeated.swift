@@ -7,12 +7,6 @@
 
 import Foundation
 
-/// Left/right cycle direction for the corner-quadrant repeated calculation.
-/// (Originally declared alongside the now-removed `SixthsRepeated` helper.)
-enum Direction {
-    case left, right
-}
-
 protocol QuartersRepeated {
     func nextCalculation(subAction: SubWindowAction, direction: Direction) -> SimpleCalc?
 }

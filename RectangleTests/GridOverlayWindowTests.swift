@@ -153,6 +153,28 @@ class GridOverlayWindowTests: XCTestCase {
         XCTAssertEqual(topZone.maxY, visibleFrame.maxY - screenFrame.minY, accuracy: eps)
     }
 
+    // MARK: - Gapped frames (WYSIWYG preview)
+
+    /// With gapSize > 0 the overlay frames are inset by the SAME shared-edge gap the
+    /// commit applies (full on screen-edge sides, half on sides shared with a
+    /// neighbour), so the drag preview matches the window the release will snap to.
+    /// The default (gapSize 0) frames stay the edge-to-edge zone rects.
+    func testGappedFramesInsetBySharedEdgeGap() {
+        let layout = ZoneLayout.uniform(cols: 2, rows: 1, id: "h", name: "h") // left | right
+        let plain = GridOverlayWindow.overlayZoneFrames(
+            layout: layout, screenFrame: screenFrame, visibleFrame: visibleFrame)
+        let gapped = GridOverlayWindow.overlayZoneFrames(
+            layout: layout, screenFrame: screenFrame, visibleFrame: visibleFrame, gapSize: 10)
+        guard let pL = plain[0], let gL = gapped[0], let gR = gapped[1] else {
+            return XCTFail("missing zones")
+        }
+        // Left zone: full gap (10) on the screen-left edge, half (5) on the shared right.
+        XCTAssertEqual(gL.minX, pL.minX + 10, accuracy: eps)
+        XCTAssertEqual(gL.maxX, pL.maxX - 5, accuracy: eps)
+        // The two zones leave exactly one gapSize between them (half from each).
+        XCTAssertEqual(gR.minX - gL.maxX, 10, accuracy: eps)
+    }
+
     // MARK: - In-bounds
 
     /// Every returned rect must lie within the window-local bounds

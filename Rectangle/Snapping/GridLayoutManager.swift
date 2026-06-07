@@ -159,19 +159,14 @@ class GridLayoutManager {
         }
 
         // Seed the pre-move restore rect so `restore` (ctrl+alt+Delete) can bring the
-        // window back to where it was before this grid move. applyGridRect/recordAction
-        // only write lastRectangleActions, NOT restoreRects, and .restore reads ONLY
-        // restoreRects — so without this a grid move on a free/never-snapped window
-        // would leave restoreRects[windowId] == nil and Restore would be a no-op. This
-        // mirrors the M5/M6 drag commits (commitGridSnap/commitGridSpanSnap). Use the
-        // AX/top-left frame (windowRect), captured before the move — the same value
-        // WindowManager.execute stores as currentWindowRect, NOT the screenFlipped rect.
-        if Defaults.unsnapRestore.enabled != false,
-           AppDelegate.windowHistory.restoreRects[windowId] == nil {
-            AppDelegate.windowHistory.restoreRects[windowId] = windowRect
-        }
-
-        windowManager.applyGridRect(targetRect, screen: screen, windowElement: windowElement, windowId: windowId)
+        // window back to where it was before this grid move, through the SHARED
+        // applyGridRect restore overload (same path the M5/M6 drag commits use). Pass
+        // the AX/top-left frame (windowRect), captured before the move — the same
+        // value WindowManager.execute stores as currentWindowRect, NOT the
+        // screenFlipped rect. The overload seeds it only when unsnap-restore is on and
+        // restoreRects[windowId] is still nil, so a window already mid-restore-chain
+        // isn't clobbered.
+        windowManager.applyGridRect(targetRect, screen: screen, windowElement: windowElement, windowId: windowId, restoreRect: windowRect)
 
         // Record the grid action itself as the last action on this window so the
         // repeat-at-wall detection (M8b) recognizes a CONSECUTIVE grid move. The
