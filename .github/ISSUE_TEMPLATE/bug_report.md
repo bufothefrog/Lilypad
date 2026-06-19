@@ -10,5 +10,5 @@ assignees: ''
 - [ ] This is a new bug that hasn't been documented in a closed issue or in the Readme.
 
 macOS version:
-Rectangle version:
-Logs if applicable (In Rectangle menu, hold option, "View Logging..."): 
+Lilypad version:
+Logs if applicable (In Lilypad menu, hold option, "View Logging..."): 

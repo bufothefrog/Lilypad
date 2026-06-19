@@ -306,8 +306,8 @@ exe-name coupling. **Clean break on settings** — no migration; fresh bundle id
   + 3 hardcoded literals: `AppDelegate.swift:17` *(launcher-kill code is removed with the target)*,
   `ApplicationToggle.swift:14`, `Config.swift:38`). The `launcherAppId` constant + `AppDelegate.swift:303-306`
   kill code can be deleted with the launcher.
-- URL scheme `rectangle` → `lilypad` (`Info.plist:26`); **register both** for back-compat (handler is
-  scheme-agnostic, so `open rectangle://…` scripts keep working).
+- URL scheme `rectangle` → `lilypad` (`Info.plist:26`); **`lilypad://` only** — legacy `rectangle://` was
+  dropped (clean break; handler is scheme-agnostic so the scheme name is cosmetic).
 - Sparkle: new `SUFeedURL` host + **new EdDSA keypair** (`SUPublicEDKey`, `Info.plist:45-47`) — the old
   key can't be reused; no in-place auto-update path from Rectangle.
 - `DEVELOPMENT_TEAM` → your team (notarization); `PRODUCT_NAME`/target → `Lilypad` (sets `Lilypad.app`).
@@ -341,7 +341,7 @@ Accessibility (and Input Monitoring, for chord mode) once after the rebrand. Exp
 1. **Layout slots with bindable shortcuts:** default **9** (`activateLayoutSlot1..9`).
 2. **"Active monitor" default** (the setting exists either way): default **cursor monitor** for layout
    activation, **front-window** for keyboard move/span.
-3. **Keep `rectangle://` alongside `lilypad://`?** Default: **keep both.**
+3. **Keep `rectangle://` alongside `lilypad://`?** RESOLVED: **`lilypad://` only** (legacy scheme removed).
 4. **Tile-all overflow** when #windows > #zones: round-robin into zones vs fall back to sqrt-auto-grid.
 5. **"All spaces":** ship as current-space-only in v1; "all spaces" = layout/shortcut validity, not
    physical cross-space arrangement.

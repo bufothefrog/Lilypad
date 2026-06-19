@@ -28,10 +28,10 @@ verification gate**, so you never go more than a short increment without confirm
 
 ```bash
 # Build
-xcodebuild -project Rectangle.xcodeproj -scheme Rectangle -configuration Debug build
+xcodebuild -project Lilypad.xcodeproj -scheme Lilypad -configuration Debug build
 
 # Unit tests (where the milestone adds/edits testable logic)
-xcodebuild -project Rectangle.xcodeproj -scheme Rectangle test
+xcodebuild -project Lilypad.xcodeproj -scheme Lilypad test
 ```
 Then for manual milestones: run the app (Xcode ▶︎ or the built product), ensure Accessibility is
 granted, and perform the milestone's **Verify** checks. **Regression sweep** (every manual milestone,

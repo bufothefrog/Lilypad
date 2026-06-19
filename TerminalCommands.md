@@ -1,6 +1,6 @@
-# Rectangle Terminal Commands for Hidden Preferences
+# Lilypad Terminal Commands for Hidden Preferences
 
-The preferences window is purposefully slim, but there's a lot that can be modified via Terminal. After executing a terminal command, restart the app as these values are loaded on application startup. For Rectangle Pro, please replace `com.knollsoft.Rectangle` with `com.knollsoft.Hookshot` for the following commands. A number of the commands below are for configuring keyboard shortcuts, and you'll need to know the key code and modifier flags integer values. You can use the free [key codes app](https://apps.apple.com/us/app/key-codes/id414568915) to help with this.
+The preferences window is purposefully slim, but there's a lot that can be modified via Terminal. After executing a terminal command, restart the app as these values are loaded on application startup. A number of the commands below are for configuring keyboard shortcuts, and you'll need to know the key code and modifier flags integer values. You can use the free [key codes app](https://apps.apple.com/us/app/key-codes/id414568915) to help with this.
 
 ## Contents
 
@@ -41,7 +41,7 @@ The preferences window is purposefully slim, but there's a lot that can be modif
 If you wish to change the default shortcuts after first launch click "Restore Default Shortcuts" in the settings tab of the preferences window. Alternatively, you can set it with the following terminal command followed by app restart. True is for the recommended shortcuts, false is for Spectacle's.
 
 ```bash
-defaults write com.knollsoft.Rectangle alternateDefaultShortcuts -bool true
+defaults write com.lilypad.Lilypad alternateDefaultShortcuts -bool true
 ```
 
 ## Adjust Behavior on Repeated Commands
@@ -52,7 +52,7 @@ If this setting is not checked, then each time you execute a half or quarter act
 The cycling behavior can be disabled entirely with:
 
 ```bash
-defaults write com.knollsoft.Rectangle subsequentExecutionMode -int 2
+defaults write com.lilypad.Lilypad subsequentExecutionMode -int 2
 ```
 
 `subsequentExecutionMode` accepts the following values:
@@ -67,7 +67,7 @@ defaults write com.knollsoft.Rectangle subsequentExecutionMode -int 2
 Set Center Half to cycle thirds sizes: 1/2 -> 2/3 -> 1/3 with:
 
 ```bash
-defaults write com.knollsoft.Rectangle centerHalfCycles -int 1
+defaults write com.lilypad.Lilypad centerHalfCycles -int 1
 ```
 
 ## Resize on Directional Move
@@ -80,7 +80,7 @@ This size will cycle between 1/2 -> 2/3 -> 1/3 of the screen’s width/height.
 Note that if subsequent execution mode is set to cycle displays when this is enabled, Move Left and Move Right will always resize to 1/2, and pressing it again will move to the next display.
 
 ```bash
-defaults write com.knollsoft.Rectangle resizeOnDirectionalMove -bool true
+defaults write com.lilypad.Lilypad resizeOnDirectionalMove -bool true
 ```
 
 ## Adjust macOS Ventura Stage Manager size
@@ -88,13 +88,13 @@ defaults write com.knollsoft.Rectangle resizeOnDirectionalMove -bool true
 By default, the Stage Manager area will be set to 190, if enabled.
 
 ```bash
-defaults write com.knollsoft.Rectangle stageSize -float <VALUE>
+defaults write com.lilypad.Lilypad stageSize -float <VALUE>
 ```
 
 To set it to a proportion of your screen's width, set it to a value between 0 and 1.
 
 ```bash
-defaults write com.knollsoft.Rectangle stageSize -float <VALUE_BETWEEN_0_AND_1>
+defaults write com.lilypad.Lilypad stageSize -float <VALUE_BETWEEN_0_AND_1>
 ```
 
 ## Enable Todo Mode
@@ -102,7 +102,7 @@ defaults write com.knollsoft.Rectangle stageSize -float <VALUE_BETWEEN_0_AND_1>
 See the [wiki](https://github.com/rxhanson/Rectangle/wiki/Todo-Mode) for more info.
 
 ```bash
-defaults write com.knollsoft.Rectangle todo -int 1
+defaults write com.lilypad.Lilypad todo -int 1
 ```
 
 ## Only allow drag-to-snap when modifier keys are pressed
@@ -120,7 +120,7 @@ Modifier keys can be combined by adding the sum of Integer Values together.
 This command would be for restricting snap to the cmd key:
 
 ```bash
-defaults write com.knollsoft.Rectangle snapModifiers -int 1048576
+defaults write com.lilypad.Lilypad snapModifiers -int 1048576
 ```
 
 ## Almost Maximize
@@ -128,11 +128,11 @@ defaults write com.knollsoft.Rectangle snapModifiers -int 1048576
 By default, "Almost Maximize" will resize the window to 90% of the screen (width & height).
 
 ```bash
-defaults write com.knollsoft.Rectangle almostMaximizeHeight -float <VALUE_BETWEEN_0_&_1>
+defaults write com.lilypad.Lilypad almostMaximizeHeight -float <VALUE_BETWEEN_0_&_1>
 ```
 
 ```bash
-defaults write com.knollsoft.Rectangle almostMaximizeWidth -float <VALUE_BETWEEN_0_&_1>
+defaults write com.lilypad.Lilypad almostMaximizeWidth -float <VALUE_BETWEEN_0_&_1>
 ```
 
 ## Add an extra centering command with custom size
@@ -140,12 +140,12 @@ defaults write com.knollsoft.Rectangle almostMaximizeWidth -float <VALUE_BETWEEN
 This extra command is not available in the UI. You'll need to know which keycode and modifier flags you want.
 
 ```bash
-defaults write com.knollsoft.Rectangle specified -dict-add keyCode -float 8 modifierFlags -float 1966080
+defaults write com.lilypad.Lilypad specified -dict-add keyCode -float 8 modifierFlags -float 1966080
 ```
 
 ```bash
-defaults write com.knollsoft.Rectangle specifiedHeight -float 1050
-defaults write com.knollsoft.Rectangle specifiedWidth -float 1680
+defaults write com.lilypad.Lilypad specifiedHeight -float 1050
+defaults write com.lilypad.Lilypad specifiedWidth -float 1680
 ```
 
 ## Add an extra centering with prominence command
@@ -159,7 +159,7 @@ The key code is:
 For example, the command for setting the shortcut to `ctrl option command C` would be:
 
 ```bash
-defaults write com.knollsoft.Rectangle centerProminently -dict-add keyCode -float 8 modifierFlags -float 1835305
+defaults write com.lilypad.Lilypad centerProminently -dict-add keyCode -float 8 modifierFlags -float 1835305
 ```
 
 
@@ -182,7 +182,7 @@ The key codes are:
 For example, the command for setting the top left ninth shortcut to `ctrl opt shift 1` would be:
 
 ```bash
-defaults write com.knollsoft.Rectangle topLeftNinth -dict-add keyCode -float 18 modifierFlags -float 917504
+defaults write com.lilypad.Lilypad topLeftNinth -dict-add keyCode -float 18 modifierFlags -float 917504
 ```
 
 ## Add extra "eighths" sizing commands
@@ -203,7 +203,7 @@ The key codes are:
 For example, the command for setting the top left eighth shortcut to `ctrl opt shift 1` would be:
 
 ```bash
-defaults write com.knollsoft.Rectangle topLeftEighth -dict-add keyCode -float 18 modifierFlags -float 917504
+defaults write com.lilypad.Lilypad topLeftEighth -dict-add keyCode -float 18 modifierFlags -float 917504
 ```
 
 ## Add additional "thirds" sizing commands 
@@ -222,7 +222,7 @@ The key codes are:
 For example, the command for setting the top left two-thirds shortcut to `ctrl opt shift 1` would be:
 
 ```bash
-defaults write com.knollsoft.Rectangle topLeftThird -dict-add keyCode -float 18 modifierFlags -float 917504
+defaults write com.lilypad.Lilypad topLeftThird -dict-add keyCode -float 18 modifierFlags -float 917504
 ```
 
 ## Add doubling/halving window sizing commands
@@ -245,7 +245,7 @@ The action direction (e.g., "Right") is the direction that the center of the win
 For example, the command for setting the doubleWidthRight shortcut to `ctrl option shift right` would be:
 
 ```bash
-defaults write com.knollsoft.Rectangle doubleWidthRight -dict-add keyCode -float 124 modifierFlags -float 11403555
+defaults write com.lilypad.Lilypad doubleWidthRight -dict-add keyCode -float 124 modifierFlags -float 11403555
 ```
 
 ## Add additional tiling and cascading commands
@@ -268,7 +268,7 @@ _tileActiveApp_ tiles only windows belonging to the currently active (foremost) 
 For example, the command for setting the cascadeActiveApp shortcut to `ctrl shift 2` would be:
 
 ```bash
-defaults write com.knollsoft.Rectangle cascadeActiveApp -dict-add keyCode -float 2 modifierFlags -float 393475
+defaults write com.lilypad.Lilypad cascadeActiveApp -dict-add keyCode -float 2 modifierFlags -float 393475
 ```
 
 ## Modify the "footprint" displayed for drag to snap area
@@ -276,31 +276,31 @@ defaults write com.knollsoft.Rectangle cascadeActiveApp -dict-add keyCode -float
 Adjust the alpha (transparency). Default is 0.3.
 
 ```bash
-defaults write com.knollsoft.Rectangle footprintAlpha -float <VALUE_BETWEEN_0_&_1>
+defaults write com.lilypad.Lilypad footprintAlpha -float <VALUE_BETWEEN_0_&_1>
 ```
 
 Change the border width. Default is 2 (used to be 1).
 
 ```bash
-defaults write com.knollsoft.Rectangle footprintBorderWidth -float <NUM_PIXELS>
+defaults write com.lilypad.Lilypad footprintBorderWidth -float <NUM_PIXELS>
 ```
 
 Disable the fade.
 
 ```bash
-defaults write com.knollsoft.Rectangle footprintFade -int 2
+defaults write com.lilypad.Lilypad footprintFade -int 2
 ```
 
 Change the color.
 
 ```bash
-defaults write com.knollsoft.Rectangle footprintColor -string "{\"red\":0,\"blue\":0.5,\"green\":0.5}"
+defaults write com.lilypad.Lilypad footprintColor -string "{\"red\":0,\"blue\":0.5,\"green\":0.5}"
 ```
 
 Change the animation duration. The value is a multiplier. Default is 0 (no animation).
 
 ```bash
-defaults write com.knollsoft.Rectangle footprintAnimationDurationMultiplier -float <MULTIPLIER>
+defaults write com.lilypad.Lilypad footprintAnimationDurationMultiplier -float <MULTIPLIER>
 ```
 
 ## Move Up/Down/Left/Right: Don't center on edge
@@ -308,7 +308,7 @@ defaults write com.knollsoft.Rectangle footprintAnimationDurationMultiplier -flo
 By default, the directional move will center the window along the edge that the window is being moved to.
 
 ```bash
-defaults write com.knollsoft.Rectangle centeredDirectionalMove -int 2
+defaults write com.lilypad.Lilypad centeredDirectionalMove -int 2
 ```
 
 ## Make Smaller limits
@@ -316,11 +316,11 @@ defaults write com.knollsoft.Rectangle centeredDirectionalMove -int 2
 By default, "Make Smaller" will decrease the window until it reaches 25% of the screen (width & height).
 
 ```bash
-defaults write com.knollsoft.Rectangle minimumWindowWidth -float <VALUE_BETWEEN_0_&_1>
+defaults write com.lilypad.Lilypad minimumWindowWidth -float <VALUE_BETWEEN_0_&_1>
 ```
 
 ```bash
-defaults write com.knollsoft.Rectangle minimumWindowHeight -float <VALUE_BETWEEN_0_&_1>
+defaults write com.lilypad.Lilypad minimumWindowHeight -float <VALUE_BETWEEN_0_&_1>
 ```
 
 ## Make Smaller/Make Larger size increments
@@ -328,7 +328,7 @@ defaults write com.knollsoft.Rectangle minimumWindowHeight -float <VALUE_BETWEEN
 By default, "Make Smaller" and "Make Larger" change the window height/width by 30 pixels.
 
 ```bash
-defaults write com.knollsoft.Rectangle sizeOffset -float <NUM_PIXELS>
+defaults write com.lilypad.Lilypad sizeOffset -float <NUM_PIXELS>
 ```
 
 ## Make Smaller/Make Larger "curtain resize" with gaps
@@ -336,7 +336,7 @@ defaults write com.knollsoft.Rectangle sizeOffset -float <NUM_PIXELS>
 By default, windows touching the edge of the screen will keep those shared edges the same while only resizing the non-shared edge. With window gaps, this is a little ambiguous since the edges don't actually touch the screen, so you can disable it for traditional, floating resizing:
 
 ```bash
-defaults write com.knollsoft.Rectangle curtainChangeSize -int 2
+defaults write com.lilypad.Lilypad curtainChangeSize -int 2
 ```
 
 ## Make Smaller/Make Larger width only
@@ -346,8 +346,8 @@ By default, "Make Smaller" and "Make Larger" change both, the window height and 
 For example, if you want to assign `ctrl option ]` to _largerWidth_ and `ctrl option [` to _smallerWidth_, the commands would be:
 
 ```bash
-defaults write com.knollsoft.Rectangle largerWidth -dict-add keyCode -float 30 modifierFlags -float 786432
-defaults write com.knollsoft.Rectangle smallerWidth -dict-add keyCode -float 33 modifierFlags -float 786432
+defaults write com.lilypad.Lilypad largerWidth -dict-add keyCode -float 30 modifierFlags -float 786432
+defaults write com.lilypad.Lilypad smallerWidth -dict-add keyCode -float 33 modifierFlags -float 786432
 ```
 
 ## Make Smaller/Make Larger height only
@@ -357,14 +357,14 @@ Similarly, if you only want to change the window height without changing window 
 For example, if you want to assign `ctrl option shift ]` to _largerHeight_ and `ctrl option shift [` to _smallerHeight_, the commands would be:
 
 ```bash
-defaults write com.knollsoft.Rectangle largerHeight -dict-add keyCode -float 30 modifierFlags -float 917504
-defaults write com.knollsoft.Rectangle smallerHeight -dict-add keyCode -float 33 modifierFlags -float 917504
+defaults write com.lilypad.Lilypad largerHeight -dict-add keyCode -float 30 modifierFlags -float 917504
+defaults write com.lilypad.Lilypad smallerHeight -dict-add keyCode -float 33 modifierFlags -float 917504
 ```
 
 ## Disabling window restore when moving windows
 
 ```bash
-defaults write com.knollsoft.Rectangle unsnapRestore -int 2
+defaults write com.lilypad.Lilypad unsnapRestore -int 2
 ```
 
 ## Changing the margin for the snap areas
@@ -372,10 +372,10 @@ defaults write com.knollsoft.Rectangle unsnapRestore -int 2
 Each margin is configured separately, and has a default value of 5
 
 ```bash
-defaults write com.knollsoft.Rectangle snapEdgeMarginTop -int 10
-defaults write com.knollsoft.Rectangle snapEdgeMarginBottom -int 10
-defaults write com.knollsoft.Rectangle snapEdgeMarginLeft -int 10
-defaults write com.knollsoft.Rectangle snapEdgeMarginRight -int 10
+defaults write com.lilypad.Lilypad snapEdgeMarginTop -int 10
+defaults write com.lilypad.Lilypad snapEdgeMarginBottom -int 10
+defaults write com.lilypad.Lilypad snapEdgeMarginLeft -int 10
+defaults write com.lilypad.Lilypad snapEdgeMarginRight -int 10
 ```
 
 ## Setting gaps at the screen edges
@@ -383,22 +383,22 @@ defaults write com.knollsoft.Rectangle snapEdgeMarginRight -int 10
 You can specify gaps at the edges of your screen that will be left uncovered by window resizing operations. This is useful if, for example, you use a dock replacement that should not have windows overlapping it.
 
 ```bash
-defaults write com.knollsoft.Rectangle screenEdgeGapTop -int 10
-defaults write com.knollsoft.Rectangle screenEdgeGapBottom -int 10
-defaults write com.knollsoft.Rectangle screenEdgeGapLeft -int 10
-defaults write com.knollsoft.Rectangle screenEdgeGapRight -int 10
+defaults write com.lilypad.Lilypad screenEdgeGapTop -int 10
+defaults write com.lilypad.Lilypad screenEdgeGapBottom -int 10
+defaults write com.lilypad.Lilypad screenEdgeGapLeft -int 10
+defaults write com.lilypad.Lilypad screenEdgeGapRight -int 10
 ```
 
 You can also separately specify the gap for a screen with a notch. Useful for multi display setups if you are using a menubar replacement.
 
 ```bash
-defaults write com.knollsoft.Rectangle screenEdgeGapTopNotch -int 5
+defaults write com.lilypad.Lilypad screenEdgeGapTopNotch -int 5
 ```
 
 If you want these gaps to be applied on your main screen only you can set screenEdgeGapsOnMainScreenOnly. Useful for multi display setups where only one screen has some dock replacement.
 
 ```bash
-defaults write com.knollsoft.Rectangle screenEdgeGapsOnMainScreenOnly -bool true
+defaults write com.lilypad.Lilypad screenEdgeGapsOnMainScreenOnly -bool true
 ```
 
 ## Ignore specific drag to snap areas
@@ -423,13 +423,13 @@ Each drag to snap area on the edge of a screen can be ignored with a single Term
 To disable the top (maximize) snap area, execute:
 
 ```bash
-defaults write com.knollsoft.Rectangle ignoredSnapAreas -int 1
+defaults write com.lilypad.Lilypad ignoredSnapAreas -int 1
 ```
 
 To disable the Top Half and Bottom Half snap areas, the bit field would be 1111 0000 0000, or 3840
 
 ```bash
-defaults write com.knollsoft.Rectangle ignoredSnapAreas -int 3840
+defaults write com.lilypad.Lilypad ignoredSnapAreas -int 3840
 ```
 
 ## Disabling gaps when maximizing
@@ -439,13 +439,13 @@ By default, the "Gaps between windows" setting applies to "Maximize" and "Maximi
 To disable the gaps for "Maximize", execute:
 
 ```bash
-defaults write com.knollsoft.Rectangle applyGapsToMaximize -int 2
+defaults write com.lilypad.Lilypad applyGapsToMaximize -int 2
 ```
 
 To disable the gaps for "Maximize Height", execute:
 
 ```bash
-defaults write com.knollsoft.Rectangle applyGapsToMaximizeHeight -int 2
+defaults write com.lilypad.Lilypad applyGapsToMaximizeHeight -int 2
 ```
 
 ## Enabling snap areas for sixths
@@ -453,7 +453,7 @@ defaults write com.knollsoft.Rectangle applyGapsToMaximizeHeight -int 2
 To enable snap areas for sixths corners, execute: 
 
 ```bash
-defaults write com.knollsoft.Rectangle sixthsSnapArea -bool true
+defaults write com.lilypad.Lilypad sixthsSnapArea -bool true
 ```
 
 Once enabled, you can drag a window to the corner, then move it along the edge towards the thirds area to snap to a sixth.
@@ -463,7 +463,7 @@ Once enabled, you can drag a window to the corner, then move it along the edge t
 There's an option in the UI for moving the cursor with the window when going across displays, but here's an option for moving it with any shortcut:
 
 ```bash
-defaults write com.knollsoft.Rectangle moveCursor -int 1
+defaults write com.lilypad.Lilypad moveCursor -int 1
 ```
 
 ## Prevent a window that is quickly dragged above the menu bar from going into Mission Control
@@ -475,39 +475,39 @@ Windows that are slowly moved above the menu bar will still go into Mission Cont
 Once this is enabled, the checkbox for it is visible in the Snap Areas tab of the Preferences window.
 
 ```bash
-defaults write com.knollsoft.Rectangle missionControlDragging -int 2
+defaults write com.lilypad.Lilypad missionControlDragging -int 2
 ```
 
 Change the allowed off-screen distance. The value is in pixels and is tied to the speed. Default is 25.
 
 ```bash
-defaults write com.knollsoft.Rectangle missionControlDraggingAllowedOffscreenDistance -float <DISTANCE>
+defaults write com.lilypad.Lilypad missionControlDraggingAllowedOffscreenDistance -float <DISTANCE>
 ```
 
 Change the disallowed duration. The value is in milliseconds. Default is 250.
 
 ```bash
-defaults write com.knollsoft.Rectangle missionControlDraggingDisallowedDuration -int <DURATION>
+defaults write com.lilypad.Lilypad missionControlDraggingDisallowedDuration -int <DURATION>
 ```
 
 ## Change the behavior of double-click window title bar
 
-To change the action ([list](https://github.com/rxhanson/Rectangle/blob/master/Rectangle/WindowAction.swift)):
+To change the action ([list](https://github.com/bufothefrog/Lilypad/blob/main/Lilypad/WindowAction.swift)):
 
 ```bash
-defaults write com.knollsoft.Rectangle doubleClickTitleBar -int <ACTION_ID + 1>
+defaults write com.lilypad.Lilypad doubleClickTitleBar -int <ACTION_ID + 1>
 ```
 
 To disable restore when double-clicked again:
 
 ```bash
-defaults write com.knollsoft.Rectangle doubleClickTitleBarRestore -int 2
+defaults write com.lilypad.Lilypad doubleClickTitleBarRestore -int 2
 ```
 
 To disable double-click window title bar only for specific bundle ids (in example, Outlook):
 
 ```bash
-defaults write com.knollsoft.Rectangle doubleClickTitleBarIgnoredApps -string "[\"com.microsoft.Outlook\"]"
+defaults write com.lilypad.Lilypad doubleClickTitleBarIgnoredApps -string "[\"com.microsoft.Outlook\"]"
 ```
 
 ## Change the order of displays to order by x coordinate for next and prev displays commands
@@ -515,5 +515,5 @@ defaults write com.knollsoft.Rectangle doubleClickTitleBarIgnoredApps -string "[
 By default, display order is left-to-right, line-by-line. You can change this to be ordered by x coordinate, left-to-right, regardless of which vertical position of the display. This was the default behavior prior to v0.87.
 
 ```bash
-defaults write com.knollsoft.Rectangle screensOrderedByX -int 1
+defaults write com.lilypad.Lilypad screensOrderedByX -int 1
 ```
