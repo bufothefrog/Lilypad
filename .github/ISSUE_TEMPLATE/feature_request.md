@@ -5,9 +5,9 @@ title: ''
 labels: 'enhancement'
 assignees: ''
 contact_links:
-  - name: Rectangle Discussions
-    url: https://github.com/rxhanson/Rectangle/discussions
+  - name: Lilypad Discussions
+    url: https://github.com/bufothefrog/Lilypad/discussions
     about: Please discuss feature ideas here.
 ---
 
-Feature ideas are now kept in the [discussions tab](https://github.com/rxhanson/Rectangle/discussions). Please create an issue there, not here.
+Feature ideas are now kept in the [discussions tab](https://github.com/bufothefrog/Lilypad/discussions). Please create an issue there, not here.
