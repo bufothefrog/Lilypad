@@ -1,0 +1,103 @@
+name: Release
+
+# Tag-triggered: builds a Developer ID-signed, notarized, stapled DMG, signs it
+# for Sparkle, and publishes a GitHub Release. Requires the secrets listed in
+# RELEASING.md. If the macos-26 runner is unavailable, pin macos-15 (and note
+# the Liquid Glass icon needs Xcode 26 tooling — see the README caveat).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  XCODE_PROJECT: "Lilypad.xcodeproj"
+  XCODE_SCHEME: "Lilypad"
+  TEAM_ID: "3H3QVL27U8"
+  APP_NAME: "Lilypad.app"
+  DMG_NAME: "Lilypad.dmg"
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import Developer ID certificate
+        env:
+          P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+      - name: Archive (Developer ID)
+        run: |
+          rm -rf build/Lilypad.xcarchive build/export
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" -configuration Release \
+            -archivePath build/Lilypad.xcarchive archive \
+            CODE_SIGN_IDENTITY="Developer ID Application" CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$TEAM_ID" OTHER_CODE_SIGN_FLAGS="--timestamp --options runtime"
+
+      - name: Export
+        run: |
+          cat > build/exportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>developer-id</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath build/Lilypad.xcarchive \
+            -exportPath build/export -exportOptionsPlist build/exportOptions.plist
+
+      - name: Package DMG
+        run: |
+          hdiutil create -volname Lilypad -srcfolder "build/export/$APP_NAME" \
+            -ov -format UDZO "build/$DMG_NAME"
+
+      - name: Notarize + staple
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          xcrun notarytool submit "build/$DMG_NAME" \
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD" --wait
+          xcrun stapler staple "build/$DMG_NAME"
+          spctl -a -vvv -t open --context context:primary-signature "build/$DMG_NAME"
+
+      - name: Sign update for Sparkle
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          SIGN="build/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update"
+          # sign_update resolves automatically; if the binary isn't present after
+          # checkout, run `xcodebuild -resolvePackageDependencies` first.
+          echo "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_key"
+          xcodebuild -resolvePackageDependencies -project "$XCODE_PROJECT" >/dev/null
+          "$SIGN" --ed-key-file "$RUNNER_TEMP/sparkle_key" "build/$DMG_NAME" | tee build/sparkle-signature.txt
+          rm -f "$RUNNER_TEMP/sparkle_key"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "build/$DMG_NAME" \
+            --title "Lilypad ${GITHUB_REF_NAME#v}" \
+            --notes "See CHANGELOG.md. Sparkle signature: $(cat build/sparkle-signature.txt)"
+          # TODO: append the <item> (with the sparkle:edSignature above) to
+          # docs/appcast.xml and commit it so GitHub Pages serves the update.

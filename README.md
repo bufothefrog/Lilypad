@@ -190,6 +190,14 @@ The original repository for MASShortcut was archived, so Lilypad (like Rectangle
 
 Due to the addition of the Liquid Glass icon with a fallback for older versions of macOS, there will be a build failure on macOS versions < 26. You can delete the "Asset Catalog Other Flags" to build locally on versions < 26 (but don't check that change in if you create a pull request).
 
+## Switching from Rectangle
+
+Lilypad is a clean break from Rectangle — it ships under a new bundle identifier (`com.lilypad.Lilypad`), so:
+
+* **Your Rectangle settings don't carry over automatically.** You can port them manually: export your config from Rectangle and import that JSON into Lilypad (see the config import/export above) — Lilypad reads a Rectangle-exported config directly. The grid/zone layouts and per-monitor snap areas are Lilypad-specific and won't come from a Rectangle export.
+* **You'll re-grant permissions.** Because the app identity changed, macOS treats Lilypad as a new app: re-grant **Accessibility** (and **Input Monitoring**, if you use chord mode) in System Settings → Privacy & Security.
+* Lilypad and Rectangle can run side by side, but you'll probably want to quit Rectangle first to avoid duplicate window-management shortcuts.
+
 ## Credits
 
 Lilypad is a fork of [Rectangle](https://github.com/rxhanson/Rectangle) by Ryan Hanson. Like Rectangle, it uses a forked version of [MASShortcut](https://github.com/rxhanson/MASShortcut) and [Sparkle](https://sparkle-project.org) for updates.
