@@ -36,15 +36,15 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2019-2026 Ryan Hanson. All rights reserved.</string>
+	<string>Copyright © 2026 Lilypad contributors. MIT licensed. A fork of Rectangle © 2019–2025 Ryan Hanson.</string>
 	<key>NSMainStoryboardFile</key>
 	<string>Main</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>SUFeedURL</key>
-	<string>https://lilypad.example.com/downloads/updates.xml</string>
+	<string>https://bufothefrog.github.io/Lilypad/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>lpt9M3PhocbZ3MZiLH+crEqRfU11kfoNzGxSqiEIdvM=</string>
+	<string>NwvrB7i4WYfPRguJlM7yHKUEOB5T1GctNbfLRySzE0c=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>172800</integer>
 </dict>

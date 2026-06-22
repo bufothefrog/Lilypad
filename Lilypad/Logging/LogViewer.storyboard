@@ -9,7 +9,7 @@
         <!--Window Controller-->
         <scene sceneID="lVl-bK-43b">
             <objects>
-                <windowController storyboardIdentifier="LogWindowController" id="vJi-GS-BV5" customClass="LogWindowController" customModule="Rectangle" customModuleProvider="target" sceneMemberID="viewController">
+                <windowController storyboardIdentifier="LogWindowController" id="vJi-GS-BV5" customClass="LogWindowController" customModule="Lilypad" customModuleProvider="target" sceneMemberID="viewController">
                     <window key="window" title="Lilypad Logging" allowsToolTipsWhenApplicationIsInactive="NO" autorecalculatesKeyViewLoop="NO" releasedWhenClosed="NO" visibleAtLaunch="NO" frameAutosaveName="" animationBehavior="default" id="Uij-UE-jd5">
                         <windowStyleMask key="styleMask" titled="YES" closable="YES" miniaturizable="YES" resizable="YES"/>
                         <windowPositionMask key="initialPositionMask" leftStrut="YES" rightStrut="YES" topStrut="YES" bottomStrut="YES"/>
@@ -50,7 +50,7 @@
         <!--Log View Controller-->
         <scene sceneID="cN1-rF-z25">
             <objects>
-                <viewController storyboardIdentifier="LogViewController" id="PiU-lX-bsA" customClass="LogViewController" customModule="Rectangle" customModuleProvider="target" sceneMemberID="viewController">
+                <viewController storyboardIdentifier="LogViewController" id="PiU-lX-bsA" customClass="LogViewController" customModule="Lilypad" customModuleProvider="target" sceneMemberID="viewController">
                     <view key="view" id="ptq-Cu-Bka">
                         <rect key="frame" x="0.0" y="0.0" width="480" height="270"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
@@ -62,7 +62,7 @@
                                     <rect key="frame" x="0.0" y="0.0" width="480" height="270"/>
                                     <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                     <subviews>
-                                        <textView importsGraphics="NO" richText="NO" verticallyResizable="YES" spellingCorrection="YES" smartInsertDelete="YES" id="gEX-Ux-opP" customClass="KeyDownTextView" customModule="Rectangle" customModuleProvider="target">
+                                        <textView importsGraphics="NO" richText="NO" verticallyResizable="YES" spellingCorrection="YES" smartInsertDelete="YES" id="gEX-Ux-opP" customClass="KeyDownTextView" customModule="Lilypad" customModuleProvider="target">
                                             <rect key="frame" x="0.0" y="0.0" width="480" height="270"/>
                                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                             <color key="textColor" name="textColor" catalog="System" colorSpace="catalog"/>
